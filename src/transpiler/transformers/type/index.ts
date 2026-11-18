@@ -7,6 +7,8 @@ import { float64TypeTransformer } from "./float";
 import { boolTypeTransformer } from "./boolean";
 import { parenthesizedTypeTransformer } from "./parenthesized";
 import { literalTypeTransformer } from "./literal";
+import { unionTypeTransformer } from "./union";
+import { arrayTypeTransformer, readonlyTypeTransformer } from "./array";
 
 export const typeTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Type | GoAST.TypeReference>[] => [
@@ -16,5 +18,8 @@ export const typeTransformers = DCommon.memo(
 		boolTypeTransformer,
 		parenthesizedTypeTransformer,
 		literalTypeTransformer,
+		unionTypeTransformer,
+		readonlyTypeTransformer,
+		arrayTypeTransformer,
 	],
 );

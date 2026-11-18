@@ -1,9 +1,10 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
-import { createEitherMethods, informationFieldIdentifier } from "../sharedDependency";
+import { createIsRightMethod, informationFieldIdentifier } from "../sharedDependency";
 
 export const failTypeIdentifier = GoAST.createIdentifier("EitherFail");
+export const failFunctionIdentifier = GoAST.createIdentifier("EitherFailOf");
 
 /**
  * `DEither.Fail`. Forme JSON DuploJS (vérifiée avec `JSON.stringify(DEither.fail())`) :
@@ -11,6 +12,10 @@ export const failTypeIdentifier = GoAST.createIdentifier("EitherFail");
  */
 export const eitherFailDependency = DCommon.memo(() => {
 	const nullType = GoAST.createIdentifier("JSNull");
+	const nullLiteral = GoAST.createStructLiteral({
+		typeReference: nullType,
+		elements: [],
+	});
 
 	return createSharedDependency({
 		imports: [],
@@ -38,7 +43,38 @@ export const eitherFailDependency = DCommon.memo(() => {
 					],
 				}),
 			}),
-			...createEitherMethods(failTypeIdentifier, false),
+			createIsRightMethod(failTypeIdentifier, false),
+			GoAST.createFunctionDeclaration({
+				identifier: failFunctionIdentifier,
+				generic: [],
+				arguments: [],
+				returnTypes: [failTypeIdentifier],
+				body: GoAST.createBlockStatement({
+					statements: [
+						GoAST.createReturnStatement({
+							values: [
+								GoAST.createStructLiteral({
+									typeReference: failTypeIdentifier,
+									elements: [
+										GoAST.createKeyedElement({
+											key: GoAST.createIdentifier("Left"),
+											value: nullLiteral,
+										}),
+										GoAST.createKeyedElement({
+											key: informationFieldIdentifier,
+											value: GoAST.createStringLiteral({ value: "fail" }),
+										}),
+										GoAST.createKeyedElement({
+											key: GoAST.createIdentifier("Fail"),
+											value: nullLiteral,
+										}),
+									],
+								}),
+							],
+						}),
+					],
+				}),
+			}),
 		],
 	});
 });

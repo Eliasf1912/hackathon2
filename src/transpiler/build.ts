@@ -94,7 +94,18 @@ export function build(
 						({ item, lastValue, nextWithObject }) => nextWithObject(
 							lastValue,
 							{
-								imports: DArray.concat(lastValue.imports, item.imports),
+								// Deux dépendances peuvent importer le même paquet (`encoding/json`) :
+								// Go refuse le doublon.
+								imports: DArray.concat(
+									lastValue.imports,
+									DArray.filter(
+										item.imports,
+										({ path }) => !DArray.some(
+											lastValue.imports,
+											(imported) => imported.path === path,
+										),
+									),
+								),
 								declarations: DArray.concat(
 									lastValue.declarations,
 									item.declarations,

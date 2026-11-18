@@ -7,6 +7,7 @@ import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../context/build";
 import { expressionTransformers } from "../expression";
 import { typeTransformers } from "../type";
+import { convertExpressionToType } from "../type/union";
 
 /**
  * Type Go d'une variable : l'annotation si elle existe, sinon le type déduit par le checker.
@@ -103,7 +104,8 @@ export const variableStatementTransformer: Transformer<
 			return initializer;
 		}
 
-		if (!isModuleVariable) {
+		// Variable locale sans annotation : `:=` prend le type de la valeur, comme TS.
+		if (!isModuleVariable && !declaration.type) {
 			return context.success({
 				before: initializer.before,
 				result: GoAST.createShortVariableDeclarationStatement({
@@ -119,13 +121,37 @@ export const variableStatementTransformer: Transformer<
 			return variableType;
 		}
 
+		// La valeur est convertie vers le type de la variable (un membre dans une union).
+		const value = await convertExpressionToType(
+			{
+				node: declaration.initializer,
+				expression: initializer.result,
+				targetType: DEither.unwrapRight(variableType),
+			},
+			context,
+		);
+
+		if (DEither.isLeft(value)) {
+			return value;
+		}
+
+		if (!isModuleVariable) {
+			return context.success({
+				before: initializer.before,
+				result: GoAST.createShortVariableDeclarationStatement({
+					identifier,
+					initializer: DEither.unwrapRight(value),
+				}),
+			});
+		}
+
 		return context.success({
 			before: DArray.concat(
 				initializer.before,
 				[
 					GoAST.createAssignmentStatement({
 						targets: DCommon.cast([identifier]),
-						values: DCommon.cast([initializer.result]),
+						values: DCommon.cast([DEither.unwrapRight(value)]),
 					}),
 				],
 			),

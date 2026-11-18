@@ -5,9 +5,9 @@ import type { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import * as DPattern from "@duplojs/lang/pattern";
 import { successExpressionHandler, successTypeHandler } from "./success";
-import { failTypeHandler } from "./fail";
-import { eitherUnionTypeHandler } from "./union";
+import { failExpressionHandler, failTypeHandler } from "./fail";
 import { isRightExpressionHandler } from "./isRight";
+import { whenIsRightExpressionHandler } from "./whenIsRight";
 
 export const duploJSEitherDeclarationTransformer: Transformer<GoAST.Declaration> = createTransformer(
 	(_node, context) => context.notSupport(),
@@ -45,8 +45,16 @@ export const duploJSEitherExpressionTransformer: Transformer<GoAST.Expression> =
 				),
 			),
 			DPattern.match(
+				DCommon.equal("fail"),
+				() => failExpressionHandler(node, context),
+			),
+			DPattern.match(
 				DCommon.equal("isRight"),
 				() => isRightExpressionHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("whenIsRight"),
+				() => whenIsRightExpressionHandler(node, context),
 			),
 			DPattern.otherwise(
 				() => context.error(node),
@@ -59,10 +67,6 @@ export const duploJSEitherTypeTransformer: Transformer<
 	GoAST.GenericTypeReference | GoAST.PackageTypeReference
 > = createTransformer(
 	async(node, context) => {
-		if (TsAST.isUnionTypeNode(node)) {
-			return eitherUnionTypeHandler(node, context);
-		}
-
 		if (!TsAST.isTypeReferenceNode(node) && !TsAST.isImportTypeNode(node)) {
 			return context.notSupport();
 		}

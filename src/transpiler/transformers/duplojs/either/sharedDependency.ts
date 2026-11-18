@@ -1,87 +1,59 @@
-import * as DCommon from "@duplojs/lang/common";
+import * as DModeling from "@duplojs/lang/modeling";
 import { GoAST } from "@go";
-import { createSharedDependency } from "@transformer";
+import { sharedDependencyPackageName } from "@transformer";
+import { type GoType } from "../../type/union";
 
 /**
- * Ce que DuploJS sait d'un Either à l'exécution, commun à toutes ses variantes
- * (Success, Fail, Left<…>, Right<…>…). Toute union d'Either est traduite par cette interface.
- *
- * La méthode s'appelle `EitherInformation` et non `Information` : Go interdit qu'un champ
- * et une méthode d'un même type portent le même nom, et les variantes ont un champ `Information`.
+ * Ce que toutes les variantes d'Either (Success, Fail…) ont en commun en Go.
+ * Une union d'Either est une union taguée générale (`UnionN`, voir `type/union`) :
+ * ces variantes en sont des membres comme les autres.
  */
-export const eitherInterfaceIdentifier = GoAST.createIdentifier("Either");
 export const isRightMethodIdentifier = GoAST.createIdentifier("IsRight");
-export const informationMethodIdentifier = GoAST.createIdentifier("EitherInformation");
 export const informationFieldIdentifier = GoAST.createIdentifier("Information");
-
-export const eitherInterfaceDependency = DCommon.memo(
-	() => createSharedDependency({
-		imports: [],
-		init: [],
-		declarations: [
-			GoAST.createTypeDefinition({
-				identifier: eitherInterfaceIdentifier,
-				type: GoAST.createInterfaceType({
-					elements: [
-						GoAST.createInterfaceMethod({
-							identifier: isRightMethodIdentifier,
-							arguments: [],
-							returnTypes: [GoAST.builtinTypeReferences.bool],
-						}),
-						GoAST.createInterfaceMethod({
-							identifier: informationMethodIdentifier,
-							arguments: [],
-							returnTypes: [GoAST.builtinTypeReferences.string],
-						}),
-					],
-				}),
-			}),
-		],
-	}),
-);
+export const valueFieldIdentifier = GoAST.createIdentifier("Value");
 
 /**
- * Les deux méthodes de l'interface `Either`, à déclarer pour chaque variante.
+ * Types Go des variantes Right, qui portent leur valeur dans le champ `Value`.
+ * Les déclarer ici permet de savoir, sur le type Go seul, quels membres d'une union
+ * sont des Right (DuploJS les marque par des clés symboles, que le checker n'expose pas
+ * sous un nom lisible).
  */
-export function createEitherMethods(
+const rightVariantTypeNames = new Set<string>();
+
+export function declareRightVariantType(identifier: GoAST.Identifier) {
+	rightVariantTypeNames.add(identifier.value);
+}
+
+export function isRightVariantType(type: GoType) {
+	const reference = DModeling.hasTagValue(type, "[node]type-reference-generic")
+		? type.typeReference
+		: type;
+
+	return DModeling.hasTagValue(reference, "[node]type-reference-package")
+		&& reference.packageName.value === sharedDependencyPackageName.value
+		&& rightVariantTypeNames.has(reference.identifier.value);
+}
+
+/**
+ * Méthode `IsRight()`, à déclarer pour chaque variante : `DEither.isRight` sur une
+ * variante seule (hors union) devient un appel de méthode, sans test de type.
+ */
+export function createIsRightMethod(
 	receiverType: GoAST.MethodReceiverType,
 	isRight: boolean,
 ) {
-	const receiver = GoAST.createIdentifier("either");
-
-	return [
-		GoAST.createMethodDeclaration({
-			identifier: isRightMethodIdentifier,
-			receiver: [receiver, receiverType],
-			generic: [],
-			arguments: [],
-			returnTypes: [GoAST.builtinTypeReferences.bool],
-			body: GoAST.createBlockStatement({
-				statements: [
-					GoAST.createReturnStatement({
-						values: [GoAST.createBooleanLiteral({ value: isRight })],
-					}),
-				],
-			}),
+	return GoAST.createMethodDeclaration({
+		identifier: isRightMethodIdentifier,
+		receiver: [GoAST.createIdentifier("_"), receiverType],
+		generic: [],
+		arguments: [],
+		returnTypes: [GoAST.builtinTypeReferences.bool],
+		body: GoAST.createBlockStatement({
+			statements: [
+				GoAST.createReturnStatement({
+					values: [GoAST.createBooleanLiteral({ value: isRight })],
+				}),
+			],
 		}),
-		GoAST.createMethodDeclaration({
-			identifier: informationMethodIdentifier,
-			receiver: [receiver, receiverType],
-			generic: [],
-			arguments: [],
-			returnTypes: [GoAST.builtinTypeReferences.string],
-			body: GoAST.createBlockStatement({
-				statements: [
-					GoAST.createReturnStatement({
-						values: [
-							GoAST.createSelectorExpression({
-								target: receiver,
-								identifier: informationFieldIdentifier,
-							}),
-						],
-					}),
-				],
-			}),
-		}),
-	] as const;
+	});
 }

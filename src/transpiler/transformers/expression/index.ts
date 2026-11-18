@@ -6,6 +6,7 @@ import { identifierTransformer } from "../common";
 import { numericLiteralTransformer } from "./numericLiteral";
 import { sharedExpressionTransformers } from "../shared";
 import { binaryExpressionTransformer } from "./binary";
+import { prefixUnaryExpressionTransformer } from "./unary";
 import { booleanLiteralTransformer, stringLiteralTransformer } from "./literal";
 
 export const expressionTransformers = DCommon.memo(
@@ -17,5 +18,6 @@ export const expressionTransformers = DCommon.memo(
 		stringLiteralTransformer,
 		booleanLiteralTransformer,
 		binaryExpressionTransformer,
+		prefixUnaryExpressionTransformer,
 	],
 );
