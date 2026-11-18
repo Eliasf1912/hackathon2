@@ -5,27 +5,9 @@ import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { type BuildContext } from "../../../../context/build";
-import { callExpressionTransformer } from "../../../shared";
+import { callExpressionTransformer, getInstantiatedSignature } from "../../../shared";
 import { transformCheckerType } from "../../../type/union";
 import { coalescingArrayIdentifier, coalescingDependency, coalescingValueIdentifier } from "./sharedDependency";
-
-/**
- * Signature de `coalescing` instanciée là où il est utilisé :
- * appelé (`coalescing(x)`) ou passé en valeur (`whenIsRight(r, coalescing)`, où TS
- * déduit son type du paramètre qui le reçoit).
- */
-async function getInstantiatedSignature(node: TsAST.Expression, context: BuildContext) {
-	const { typeChecker } = context.transpilation;
-	const { parent } = node;
-
-	if (TsAST.isCallExpression(parent) && parent.expression === node) {
-		return typeChecker.getResolvedSignature(parent);
-	}
-
-	const contextualType = await typeChecker.getContextualType(node);
-
-	return contextualType && DArray.first(await contextualType.getCallSignatures());
-}
 
 /**
  * `DArray.coalescing` → `shard_dependencies.CoalescingValue[T]` ou `CoalescingArray[T]`,

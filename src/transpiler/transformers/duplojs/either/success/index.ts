@@ -5,7 +5,7 @@ import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";
-import { callExpressionTransformer } from "../../../shared";
+import { callExpressionTransformer, getInstantiatedSignature } from "../../../shared";
 import { typeTransformers } from "../../../type";
 import { eitherSuccessDependency, successFunctionIdentifier, successTypeIdentifier } from "./sharedDependency";
 
@@ -17,19 +17,22 @@ export async function successExpressionHandler(
 		return context.transform(node, [callExpressionTransformer]);
 	}
 
-	const callExpression = node.parent;
+	if (!TsAST.isIdentifier(node) && !TsAST.isPropertyAccessExpression(node)) {
+		return context.error(node, "un-support-success-reference");
+	}
 
-	if (!TsAST.isCallExpression(callExpression) || callExpression.expression !== node) {
-		return context.error(node, "un-support-success-without-call");
+	// Appelée (`success(x)` via un appelé non simple) ou passée en valeur (`pipe(x, success)`).
+	const signature = await getInstantiatedSignature(node, context);
+
+	if (!signature) {
+		return context.error(node, "un-support-success-without-instantiation");
 	}
 
 	const { typeChecker } = context.transpilation;
 
 	const returnTypeNode = await typeChecker.typeToTypeNode(
-		await typeChecker.getReturnTypeOfSignature(
-			await typeChecker.getResolvedSignature(callExpression),
-		),
-		callExpression,
+		await typeChecker.getReturnTypeOfSignature(signature),
+		node,
 	);
 
 	const valueTypeNode = returnTypeNode
