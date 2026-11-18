@@ -1,3 +1,8 @@
 node_modules
 dist
 tests
+_bmad-output/
+.agent/
+.agents/
+_bmad/
+.claude/
