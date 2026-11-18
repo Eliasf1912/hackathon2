@@ -17,12 +17,49 @@ export async function successExpressionHandler(
 		return context.transform(node, [callExpressionTransformer]);
 	}
 
+	const callExpression = node.parent;
+
+	if (!TsAST.isCallExpression(callExpression) || callExpression.expression !== node) {
+		return context.error(node, "un-support-success-without-call");
+	}
+
+	const { typeChecker } = context.transpilation;
+
+	const returnTypeNode = await typeChecker.typeToTypeNode(
+		await typeChecker.getReturnTypeOfSignature(
+			await typeChecker.getResolvedSignature(callExpression),
+		),
+		callExpression,
+	);
+
+	const valueTypeNode = returnTypeNode
+		&& (TsAST.isTypeReferenceNode(returnTypeNode) || TsAST.isImportTypeNode(returnTypeNode))
+		&& returnTypeNode.typeArguments
+		&& DArray.first(returnTypeNode.typeArguments);
+
+	if (!valueTypeNode) {
+		return context.error(node, "un-support-success-type-argument");
+	}
+
+	const valueType = await DCommon.asyncPipe(
+		context.transform(valueTypeNode, typeTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(valueType)) {
+		return valueType;
+	}
+
 	const packageName = context.registerSharedDependency(eitherSuccessDependency.value);
 
 	return context.success({
-		result: GoAST.createSelectorExpression({
-			target: packageName,
-			identifier: successFunctionIdentifier,
+		before: valueType.before,
+		result: GoAST.createInstantiationExpression({
+			target: GoAST.createSelectorExpression({
+				target: packageName,
+				identifier: successFunctionIdentifier,
+			}),
+			typeArguments: DCommon.cast([valueType.result]),
 		}),
 	});
 }
