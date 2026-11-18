@@ -4,6 +4,8 @@
     "build": "tsx --tsconfig tsconfig.app.json bin/index.ts",
     "build:00": "pnpm build --tsconfig projects/00/tsconfig.json --input projects/00/index.ts --output projects/00/dist",
     "build:01": "pnpm build --tsconfig projects/01/tsconfig.json --input projects/01/index.ts --output projects/01/dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:types": "./.commands/test-types.sh",
     "test:lint": "./.commands/test-lint.sh"
   },
@@ -25,6 +27,7 @@
     "@duplojs/agents-kit": "0.1.0-beta.11",
     "@duplojs/code-config": "0.1.0-beta.11",
     "@types/node": "24.19.2",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "vitest": "5.0.1"
   }
 }

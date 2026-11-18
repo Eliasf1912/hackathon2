@@ -5,6 +5,36 @@ import * as DCommon from "@duplojs/lang/common";
 import { expressionTransformers } from "../expression";
 import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
+import * as DModeling from "@duplojs/lang/modeling";
+
+/**
+ * Référence simple : `f` ou `pkg.F` (sélecteur sur un identifiant), sans calcul préalable.
+ * La lire n'a pas d'effet de bord : on peut l'utiliser directement dans l'appel, sans
+ * variable temporaire, sans changer l'ordre d'évaluation.
+ *
+ * Appeler directement permet à Go de déduire lui-même les types d'une fonction générique
+ * à partir des arguments. Rangée dans une variable, elle devrait être instanciée.
+ *
+ * Limite connue : si un argument réaffecte la variable qui contient la fonction
+ * (`f(f = g)`), l'ordre JS (fonction lue avant les arguments) n'est plus respecté.
+ */
+interface TransformedCallee {
+	before: readonly GoAST.Statement[];
+	result: GoAST.Expression;
+}
+
+function isSimpleReference(callee: TransformedCallee) {
+	if (!DArray.lengthEqual(callee.before, 0)) {
+		return false;
+	}
+
+	if (DModeling.hasTagValue(callee.result, "[node]identifier")) {
+		return true;
+	}
+
+	return DModeling.hasTagValue(callee.result, "[node][expression]selector")
+		&& DModeling.hasTagValue(callee.result.target, "[node]identifier");
+}
 
 export const callExpressionTransformer: Transformer<GoAST.CallExpression> = createTransformer(
 	async(rawNode, context) => {
@@ -28,6 +58,8 @@ export const callExpressionTransformer: Transformer<GoAST.CallExpression> = crea
 			identifier: context.generateIdentifier(),
 			initializer: callee.result,
 		});
+
+		const calledDirectly = isSimpleReference(callee);
 
 		const argumentsResult = await DCommon.asyncPipe(
 			node.arguments,
@@ -76,13 +108,17 @@ export const callExpressionTransformer: Transformer<GoAST.CallExpression> = crea
 		}
 
 		return context.success({
-			before: DArray.concat(
-				callee.before,
-				[functionVariableStatement],
-				argumentsResult.before,
-			),
+			before: calledDirectly
+				? argumentsResult.before
+				: DArray.concat(
+					callee.before,
+					[functionVariableStatement],
+					argumentsResult.before,
+				),
 			result: GoAST.createCallExpression({
-				callee: functionVariableStatement.identifier,
+				callee: calledDirectly
+					? callee.result
+					: functionVariableStatement.identifier,
 				arguments: argumentsResult.arguments,
 			}),
 		});

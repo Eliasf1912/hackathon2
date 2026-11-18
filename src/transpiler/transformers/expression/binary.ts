@@ -5,6 +5,7 @@ import { expressionTransformers } from ".";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
+import { type BuildContext } from "../../context/build";
 
 const binaryOperators: Partial<
 	Record<TsAST.SyntaxKind, GoAST.BinaryOperator>
@@ -32,7 +33,85 @@ const binaryOperators: Partial<
 	[TsAST.SyntaxKind.GreaterThanEqualsToken]: ">=",
 };
 
-export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression> = createTransformer(
+/**
+ * `&&` et `||` court-circuitent : l'opérande droit n'est évalué que si l'opérande gauche
+ * ne suffit pas à décider. Ses calculs préalables (`before`) ne peuvent donc pas être
+ * placés avant l'opération : ils vont dans une branche Go conditionnelle.
+ *
+ * Sans calcul préalable, l'opérande droit reste dans l'expression Go, qui court-circuite
+ * elle aussi.
+ */
+interface LogicalExpressionParams {
+	node: TsAST.BinaryExpression;
+	operator: "&&" | "||";
+	leftBefore: readonly GoAST.Statement[];
+	leftAssignment: GoAST.ShortVariableDeclarationStatement;
+}
+
+async function logicalExpressionHandler(
+	{ node, operator, leftBefore, leftAssignment }: LogicalExpressionParams,
+	context: BuildContext,
+): Promise<ReturnType<Transformer<GoAST.BinaryExpression | GoAST.Identifier>["transformer"]>> {
+	const right = await DCommon.asyncPipe(
+		context.transform(node.right, expressionTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(right)) {
+		return right;
+	}
+
+	if (DArray.lengthEqual(right.before, 0)) {
+		return context.success({
+			before: DArray.concat(leftBefore, [leftAssignment]),
+			result: GoAST.createBinaryExpression({
+				operator,
+				left: leftAssignment.identifier,
+				right: right.result,
+			}),
+		});
+	}
+
+	// Le résultat vaut l'opérande gauche, sauf si l'opérande droit doit être évalué.
+	const resultDeclaration = GoAST.createShortVariableDeclarationStatement({
+		identifier: context.generateIdentifier(),
+		initializer: leftAssignment.identifier,
+	});
+
+	// && : évaluer la droite seulement si la gauche est vraie.
+	// || : évaluer la droite seulement si la gauche est fausse.
+	const condition = operator === "&&"
+		? leftAssignment.identifier
+		: GoAST.createUnaryExpression({
+			operator: "!",
+			operand: leftAssignment.identifier,
+		});
+
+	const rightBranch = GoAST.createIfStatement({
+		condition,
+		body: GoAST.createBlockStatement({
+			statements: DArray.concat(
+				right.before,
+				[
+					GoAST.createAssignmentStatement({
+						targets: DCommon.cast([resultDeclaration.identifier]),
+						values: DCommon.cast([right.result]),
+					}),
+				],
+			),
+		}),
+	});
+
+	return context.success({
+		before: DArray.concat(
+			leftBefore,
+			[leftAssignment, resultDeclaration, rightBranch],
+		),
+		result: resultDeclaration.identifier,
+	});
+}
+
+export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression | GoAST.Identifier> = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isBinaryExpression(node)) {
 			return context.notSupport();
@@ -57,6 +136,18 @@ export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression> = 
 			identifier: context.generateIdentifier(),
 			initializer: left.result,
 		});
+
+		if (operator === "&&" || operator === "||") {
+			return logicalExpressionHandler(
+				{
+					node,
+					operator,
+					leftBefore: left.before,
+					leftAssignment,
+				},
+				context,
+			);
+		}
 
 		const right = await DCommon.asyncPipe(
 			context.transform(node.right, expressionTransformers.value),

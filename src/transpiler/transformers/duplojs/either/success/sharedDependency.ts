@@ -1,6 +1,7 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
+import { createEitherMethods } from "../sharedDependency";
 
 export const successFunctionIdentifier = GoAST.createIdentifier("EitherSuccessOf");
 export const successTypeIdentifier = GoAST.createIdentifier("EitherSuccess");
@@ -28,7 +29,8 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 		imports: [],
 		init: [],
 		declarations: [
-			GoAST.createTypeAlias({
+			// Définition de type (et non alias) : Go n'accepte pas de méthodes sur un alias générique.
+			GoAST.createTypeDefinition({
 				identifier: successTypeIdentifier,
 				generic: [successTypeParameter],
 				type: GoAST.createStructType({
@@ -56,6 +58,7 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 					],
 				}),
 			}),
+			...createEitherMethods(successTypeReference, true),
 			GoAST.createFunctionDeclaration({
 				identifier: successFunctionIdentifier,
 				generic: [successTypeParameter],
