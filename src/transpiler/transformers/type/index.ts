@@ -9,6 +9,8 @@ import { parenthesizedTypeTransformer } from "./parenthesized";
 import { literalTypeTransformer } from "./literal";
 import { unionTypeTransformer } from "./union";
 import { arrayTypeTransformer, readonlyTypeTransformer } from "./array";
+import { stringTypeTransformer } from "./string";
+import { intersectionTypeTransformer } from "./intersection";
 
 export const typeTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Type | GoAST.TypeReference>[] => [
@@ -21,5 +23,7 @@ export const typeTransformers = DCommon.memo(
 		unionTypeTransformer,
 		readonlyTypeTransformer,
 		arrayTypeTransformer,
+		stringTypeTransformer,
+		intersectionTypeTransformer,
 	],
 );

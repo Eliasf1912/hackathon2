@@ -3,6 +3,7 @@ import { callExpressionTransformer } from "./call";
 
 export * from "./call";
 export * from "./instantiatedSignature";
+export * from "./functionValue";
 
 export const sharedStatementTransformers = DCommon.memo(
 	() => [callExpressionTransformer],

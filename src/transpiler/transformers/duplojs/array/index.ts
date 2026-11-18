@@ -5,6 +5,7 @@ import { createTransformer, type Transformer } from "@transformer";
 import type { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import { coalescingExpressionHandler } from "./coalescing";
+import { mapExpressionHandler } from "./map";
 
 /**
  * Fonctions du domaine `@duplojs/lang/array` (`DArray.*`).
@@ -37,6 +38,10 @@ export const duploJSArrayExpressionTransformer: Transformer<GoAST.Expression> = 
 			DPattern.match(
 				DCommon.equal("coalescing"),
 				() => coalescingExpressionHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("map"),
+				() => mapExpressionHandler(node, context),
 			),
 			DPattern.otherwise(
 				() => context.error(node),
