@@ -8,8 +8,10 @@
 #   - les exercices projects/00 à projects/12 ;
 #   - les copies de .commands/output-cases/ (chemins d'échec et variantes des exercices).
 #
-# Usage : ./.commands/test-outputs.sh [-v]
-#   -v : affiche le diff TypeScript / Go des cas différents.
+# Usage : ./.commands/test-outputs.sh [-v] [dossier…]
+#   -v      : affiche le diff TypeScript / Go des cas différents.
+#   dossier : ne teste que ces cas (chacun contient index.ts et tsconfig.json) ;
+#             utilisé par le stress test. Sans dossier : exercices et output-cases.
 #
 # Le go.mod généré demande une version de Go précise : il est aligné sur la version
 # installée (GOTOOLCHAIN=local) pour ne pas déclencher de téléchargement.
@@ -17,7 +19,13 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERBOSE="${1:-}"
+VERBOSE=""
+
+if [ "${1:-}" = "-v" ]; then
+	VERBOSE="-v"
+	shift
+fi
+
 TSX="$ROOT/node_modules/.bin/tsx"
 GO_VERSION="$(go env GOVERSION | sed 's/^go//')"
 
@@ -70,13 +78,19 @@ runCase() {
 	rm -rf "${workDirectory:?}"
 }
 
-for project in "$ROOT"/projects/*/; do
-	runCase "${project%/}" "exercice $(basename "$project")"
-done
+if [ "$#" -gt 0 ]; then
+	for caseDirectory in "$@"; do
+		runCase "$(cd "$caseDirectory" && pwd)" "cas $(basename "$caseDirectory")"
+	done
+else
+	for project in "$ROOT"/projects/*/; do
+		runCase "${project%/}" "exercice $(basename "$project")"
+	done
 
-for outputCase in "$ROOT"/.commands/output-cases/*/; do
-	runCase "${outputCase%/}" "cas $(basename "$outputCase")"
-done
+	for outputCase in "$ROOT"/.commands/output-cases/*/; do
+		runCase "${outputCase%/}" "cas $(basename "$outputCase")"
+	done
+fi
 
 echo
 echo "$identical/$total identiques | $different différents (format ou données) | $goFailed Go KO | $translationFailed traduction KO"

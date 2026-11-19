@@ -35,7 +35,6 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 		imports: [],
 		init: [],
 		declarations: [
-			// Définition de type (et non alias) : Go n'accepte pas de méthodes sur un alias générique.
 			GoAST.createTypeDefinition({
 				identifier: successTypeIdentifier,
 				generic: [successTypeParameter],
@@ -98,67 +97,6 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 											value: nullLiteral,
 										}),
 									],
-								}),
-							],
-						}),
-					],
-				}),
-			}),
-			GoAST.createMethodDeclaration({
-				identifier: GoAST.createIdentifier("IsRight"),
-				receiver: [
-					GoAST.createIdentifier("e"),
-					successTypeReference,
-				],
-				generic: [],
-				arguments: [],
-				returnTypes: [GoAST.builtinTypeReferences.bool],
-				body: GoAST.createBlockStatement({
-					statements: [
-						GoAST.createReturnStatement({
-							values: [GoAST.createBooleanLiteral({ value: true })],
-						}),
-					],
-				}),
-			}),
-			GoAST.createMethodDeclaration({
-				identifier: GoAST.createIdentifier("GetEitherValue"),
-				receiver: [
-					GoAST.createIdentifier("e"),
-					successTypeReference,
-				],
-				generic: [],
-				arguments: [],
-				returnTypes: [GoAST.builtinTypeReferences.any],
-				body: GoAST.createBlockStatement({
-					statements: [
-						GoAST.createReturnStatement({
-							values: [
-								GoAST.createSelectorExpression({
-									target: GoAST.createIdentifier("e"),
-									identifier: GoAST.createIdentifier("Value"),
-								}),
-							],
-						}),
-					],
-				}),
-			}),
-			GoAST.createMethodDeclaration({
-				identifier: GoAST.createIdentifier("GetEitherInformation"),
-				receiver: [
-					GoAST.createIdentifier("e"),
-					successTypeReference,
-				],
-				generic: [],
-				arguments: [],
-				returnTypes: [GoAST.builtinTypeReferences.string],
-				body: GoAST.createBlockStatement({
-					statements: [
-						GoAST.createReturnStatement({
-							values: [
-								GoAST.createSelectorExpression({
-									target: GoAST.createIdentifier("e"),
-									identifier: GoAST.createIdentifier("Information"),
 								}),
 							],
 						}),
