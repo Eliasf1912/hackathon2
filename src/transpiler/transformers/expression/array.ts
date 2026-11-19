@@ -9,12 +9,12 @@ import { expressionTransformers } from ".";
 import { convertExpressionToType, transformCheckerType } from "../type/union";
 
 /**
- * `[a, b]` → `[]T{a, b}`, avec `T` d'après le type que le checker donne au littéral
- * (tableau ou tuple homogène). Chaque élément est converti vers `T`.
+ * `[a, b]` → `[]T{a, b}` (tableau TS) ou `[2]T{a, b}` (tuple), d'après le type que le
+ * checker donne au littéral. Chaque élément est converti vers `T`.
  *
  * Limite connue : l'élément `...spread` n'est pas pris en charge.
  */
-export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral> = createTransformer(
+export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral | GoAST.ArrayLiteral> = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isArrayLiteralExpression(node)) {
 			return context.notSupport();
@@ -36,7 +36,7 @@ export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral> = createTr
 
 		const goType = DEither.unwrapRight(sliceType);
 
-		if (!DModeling.hasTagValue(goType, "[node][type]slice")) {
+		if (!DModeling.hasTagValue(goType, "[node][type]slice") && !DModeling.hasTagValue(goType, "[node][type]array")) {
 			return context.error(node, "un-support-array-literal-type");
 		}
 
@@ -86,12 +86,20 @@ export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral> = createTr
 			DEither.unwrapRight,
 		);
 
+		const before = DArray.flatMap(transformedElements, ({ before: elementBefore }) => elementBefore);
+		const literalElements = DArray.map(transformedElements, ({ result }) => result);
+
 		return context.success({
-			before: DArray.flatMap(transformedElements, ({ before }) => before),
-			result: GoAST.createSliceLiteral({
-				typeReference: goType,
-				elements: DArray.map(transformedElements, ({ result }) => result),
-			}),
+			before,
+			result: DModeling.hasTagValue(goType, "[node][type]array")
+				? GoAST.createArrayLiteral({
+					typeReference: goType,
+					elements: literalElements,
+				})
+				: GoAST.createSliceLiteral({
+					typeReference: goType,
+					elements: literalElements,
+				}),
 		});
 	},
 );

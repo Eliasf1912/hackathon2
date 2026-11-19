@@ -21,14 +21,15 @@ export const readonlyTypeTransformer: Transformer<GoAST.Type | GoAST.TypeReferen
 );
 
 /**
- * `T[]` → `[]T`, et tuple dont tous les éléments ont le même type Go (`[number, number]`)
- * → `[]T`.
+ * `T[]` → `[]T`, et tuple dont tous les éléments ont le même type Go
+ * (`[number, number, number]`) → tableau Go `[3]float64` : la cardinalité reste dans le
+ * type, et la valeur ne demande pas d'allocation sur le tas.
  *
- * shortcut: un tuple devient une slice (sa longueur fixe n'est pas gardée, elle est déjà
- * vérifiée par TS) ; un tuple hétérogène (`[number, string]`) est refusé, à traduire en
- * struct quand un exercice en aura besoin.
+ * shortcut: un tuple hétérogène (`[number, string]`), vide ou à éléments optionnels / rest
+ * est refusé ; à traduire en struct `TupleN[T0…]` (avec `MarshalJSON` en tableau) quand
+ * un exercice en aura besoin.
  */
-export const arrayTypeTransformer: Transformer<GoAST.SliceType> = createTransformer(
+export const arrayTypeTransformer: Transformer<GoAST.SliceType | GoAST.ArrayType> = createTransformer(
 	async(node, context) => {
 		if (TsAST.isArrayTypeNode(node)) {
 			const element = await DCommon.asyncPipe(
@@ -79,13 +80,22 @@ export const arrayTypeTransformer: Transformer<GoAST.SliceType> = createTransfor
 			({ result }) => goTypeKey(result) === goTypeKey(first.result),
 		);
 
-		if (!first || !isHomogeneous) {
+		const hasVariableLength = DArray.some(
+			node.elements,
+			(element) => TsAST.isOptionalTypeNode(element) || TsAST.isRestTypeNode(element)
+				|| (TsAST.isNamedTupleMember(element) && (!!element.questionToken || !!element.dotDotDotToken)),
+		);
+
+		if (!first || !isHomogeneous || hasVariableLength) {
 			return context.error(node, "un-support-heterogeneous-or-empty-tuple");
 		}
 
 		return context.success({
 			before: DArray.flatMap(transformedElements, ({ before }) => before),
-			result: GoAST.createSliceType({ elementType: first.result }),
+			result: GoAST.createArrayType({
+				length: GoAST.createIntegerLiteral({ value: BigInt(transformedElements.length) }),
+				elementType: first.result,
+			}),
 		});
 	},
 );

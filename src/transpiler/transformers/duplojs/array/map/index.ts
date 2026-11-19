@@ -85,8 +85,10 @@ function applyMap(
 	{ node, array, arrayType, outputType, theFunction }: ApplyMapParams,
 	context: BuildContext,
 ) {
+	const isTuple = DModeling.hasTagValue(arrayType, "[node][type]array");
+
 	if (
-		!DModeling.hasTagValue(arrayType, "[node][type]slice")
+		(!DModeling.hasTagValue(arrayType, "[node][type]slice") && !isTuple)
 		|| !DModeling.hasTagValue(outputType, "[node][type]slice")
 	) {
 		return context.error(node, "un-support-map-array-type");
@@ -104,7 +106,10 @@ function applyMap(
 				identifier: mapFunctionIdentifier,
 			}),
 			arguments: [
-				array,
+				// Un tableau `[N]T` est vu comme une slice, sans copie (`array` est une variable).
+				isTuple
+					? GoAST.createSliceExpression({ target: array })
+					: array,
 				adaptFunctionValue({
 					callee: theFunction.callee,
 					parameterTypes: [arrayType.elementType],

@@ -32,8 +32,61 @@ async function transformAnnotation(typeNode: TsAST.TypeNode, context: BuildConte
  * Paramètre d'une fonction anonyme : son annotation, sinon le type que le checker lui donne
  * (souvent déduit du contexte : `(value) => …` passé à `rightPipe`).
  */
+/**
+ * `[a, , b]` : chaque nom est lié à la position correspondante de `source`
+ * (`a := source[0]`, `b := source[2]`). Tableau Go ou slice : même accès par index.
+ *
+ * Limite connue : éléments imbriqués (`[[a]]`), valeur par défaut (`[a = 1]`),
+ * reste (`[...a]`) et déstructuration d'objet (`{ a }`).
+ */
+function createArrayBindings(
+	pattern: TsAST.ArrayBindingPattern,
+	source: GoAST.Identifier,
+	context: BuildContext,
+) {
+	const bindings = DArray.map(pattern.elements, (element, { index }) => {
+		// Élément omis (`[, b]`) : sans nom en TS 7.
+		if (TsAST.isOmittedExpression(element) || !element.name) {
+			return DEither.right("binding", undefined);
+		}
+
+		if (!TsAST.isIdentifier(element.name) || element.initializer || element.dotDotDotToken) {
+			return context.error(element, "un-support-binding-element");
+		}
+
+		return DEither.right(
+			"binding",
+			GoAST.createShortVariableDeclarationStatement({
+				identifier: context.createSourceIdentifier(element.name.text),
+				initializer: GoAST.createIndexExpression({
+					target: source,
+					index: GoAST.createIntegerLiteral({ value: BigInt(index) }),
+				}),
+			}),
+		);
+	});
+
+	const failed = DArray.find(bindings, DEither.isLeft);
+
+	if (failed) {
+		return failed;
+	}
+
+	return DEither.right(
+		"bindings",
+		DArray.filter(
+			DArray.map(DArray.filter(bindings, DEither.isRight), DEither.unwrapRight),
+			(binding) => binding !== undefined,
+		),
+	);
+}
+
+/**
+ * Paramètre Go d'un paramètre TS, et les instructions qui lient ses noms quand il est
+ * déstructuré (`([one, two]) => …` : paramètre généré, puis `one := p[0]`…).
+ */
 async function transformParameter(parameter: TsAST.ParameterDeclaration, context: BuildContext) {
-	if (!TsAST.isIdentifier(parameter.name)) {
+	if (!TsAST.isIdentifier(parameter.name) && !TsAST.isArrayBindingPattern(parameter.name)) {
 		return context.error(parameter, "params-name-is-not-identifier");
 	}
 
@@ -49,13 +102,25 @@ async function transformParameter(parameter: TsAST.ParameterDeclaration, context
 		return type;
 	}
 
-	return DEither.right(
-		"parameter",
-		GoAST.createFunctionArgument({
-			identifier: context.createSourceIdentifier(parameter.name.text),
+	const identifier = TsAST.isIdentifier(parameter.name)
+		? context.createSourceIdentifier(parameter.name.text)
+		: context.generateIdentifier();
+
+	const bindings = TsAST.isArrayBindingPattern(parameter.name)
+		? createArrayBindings(parameter.name, identifier, context)
+		: DEither.right("bindings", []);
+
+	if (DEither.isLeft(bindings)) {
+		return bindings;
+	}
+
+	return DEither.right("parameter", {
+		argument: GoAST.createFunctionArgument({
+			identifier,
 			type: DEither.unwrapRight(type),
 		}),
-	);
+		bindings: DEither.unwrapRight(bindings) as readonly GoAST.Statement[],
+	});
 }
 
 /**
@@ -154,14 +219,21 @@ export const functionExpressionTransformer: Transformer<GoAST.FunctionLiteral> =
 			return body;
 		}
 
+		const transformedParameters = DArray.map(
+			DArray.filter(parameters, DEither.isRight),
+			DEither.unwrapRight,
+		);
+
 		return context.success({
 			result: GoAST.createFunctionLiteral({
-				arguments: DArray.map(
-					DArray.filter(parameters, DEither.isRight),
-					DEither.unwrapRight,
-				),
+				arguments: DArray.map(transformedParameters, ({ argument }) => argument),
 				returnTypes: [DEither.unwrapRight(returnType)],
-				body: DEither.unwrapRight(body),
+				body: GoAST.createBlockStatement({
+					statements: DArray.concat(
+						DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
+						DEither.unwrapRight(body).statements,
+					),
+				}),
 			}),
 		});
 	},

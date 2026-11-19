@@ -11,14 +11,21 @@ export const coalescingArrayIdentifier = GoAST.createIdentifier("CoalescingArray
  * donc le transpileur choisit la fonction Go à la compilation :
  *
  * ```go
- * func CoalescingValue[T any](value T) []T { return []T{value} }
- * func CoalescingArray[T any](value []T) []T { return value }
+ * func CoalescingValue[T any](value T) [1]T { return [1]T{value} }
+ * func CoalescingArray[A any](value A) A { return value }
  * ```
+ *
+ * `[valeur]` est un tuple TS (`readonly [number]`), donc un tableau Go `[1]T`.
+ * `CoalescingArray` ne fait rien : générique sur le type entier, il vaut pour une slice
+ * comme pour un tableau `[N]T`.
  */
 export const coalescingDependency = DCommon.memo(() => {
 	const generic = GoAST.createIdentifier("T");
 	const value = GoAST.createIdentifier("value");
-	const sliceType = GoAST.createSliceType({ elementType: generic });
+	const tupleType = GoAST.createArrayType({
+		length: GoAST.createIntegerLiteral({ value: 1n }),
+		elementType: generic,
+	});
 	const typeParameter = GoAST.createTypeParameter({
 		identifier: generic,
 		constraint: GoAST.builtinTypeReferences.any,
@@ -26,7 +33,8 @@ export const coalescingDependency = DCommon.memo(() => {
 
 	const createFunction = (
 		identifier: GoAST.Identifier,
-		argumentType: GoAST.Identifier | GoAST.SliceType,
+		argumentType: GoAST.Identifier,
+		returnType: GoAST.Identifier | GoAST.ArrayType,
 		result: GoAST.Expression,
 	) => GoAST.createFunctionDeclaration({
 		identifier,
@@ -37,7 +45,7 @@ export const coalescingDependency = DCommon.memo(() => {
 				type: argumentType,
 			}),
 		],
-		returnTypes: [sliceType],
+		returnTypes: [returnType],
 		body: GoAST.createBlockStatement({
 			statements: [GoAST.createReturnStatement({ values: [result] })],
 		}),
@@ -50,12 +58,13 @@ export const coalescingDependency = DCommon.memo(() => {
 			createFunction(
 				coalescingValueIdentifier,
 				generic,
-				GoAST.createSliceLiteral({
-					typeReference: sliceType,
+				tupleType,
+				GoAST.createArrayLiteral({
+					typeReference: tupleType,
 					elements: [value],
 				}),
 			),
-			createFunction(coalescingArrayIdentifier, sliceType, value),
+			createFunction(coalescingArrayIdentifier, generic, generic, value),
 		],
 	});
 });
