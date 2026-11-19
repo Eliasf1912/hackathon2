@@ -9,6 +9,8 @@ import { type BuildContext } from "../../context/build";
 import { expressionTransformers } from "../expression";
 import { typeTransformers } from "../type";
 import { convertExpressionToType } from "../type/union";
+import { createBindings } from "../expression/binding";
+import * as DModeling from "@duplojs/lang/modeling";
 
 /**
  * Type Go d'une variable : l'annotation si elle existe, sinon le type déduit par le checker.
@@ -47,6 +49,60 @@ async function transformVariableType(declaration: TsAST.VariableDeclaration, con
 }
 
 /**
+ * `const { a, b } = valeur` / `const [a, b] = valeur` dans une fonction : la valeur est
+ * rangée une fois, puis chaque nom est lié (`a := valeur.A`).
+ *
+ * Limite connue : au niveau du module (il faudrait une déclaration de paquet par nom).
+ */
+async function transformLocalDestructuring(
+	declaration: TsAST.VariableDeclaration,
+	pattern: TsAST.ObjectBindingPattern | TsAST.ArrayBindingPattern,
+	isModuleVariable: boolean,
+	context: BuildContext,
+) {
+	if (isModuleVariable || !declaration.initializer) {
+		return context.error(declaration, "un-support-variable-destructuring");
+	}
+
+	const initializer = await DCommon.asyncPipe(
+		context.transform(declaration.initializer, expressionTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(initializer)) {
+		return initializer;
+	}
+
+	const source = context.generateIdentifier();
+	const bindings = createBindings(pattern, source, context);
+
+	if (DEither.isLeft(bindings)) {
+		return bindings;
+	}
+
+	const statements = DEither.unwrapRight(bindings);
+	const last = DArray.last(statements);
+
+	if (!last || !DModeling.hasTagValue(last, "[node][statement]assignment")) {
+		return context.error(declaration, "un-support-variable-destructuring");
+	}
+
+	return context.success({
+		before: DArray.concat(
+			initializer.before,
+			[
+				GoAST.createShortVariableDeclarationStatement({
+					identifier: source,
+					initializer: initializer.result,
+				}),
+			],
+			DArray.slice(statements, 0, -1),
+		),
+		result: last,
+	});
+}
+
+/**
  * `const` / `let`.
  *
  * - Variable de module (enfant direct du fichier) : `var x T` au niveau du package,
@@ -58,7 +114,7 @@ async function transformVariableType(declaration: TsAST.VariableDeclaration, con
  * déstructuration.
  */
 export const variableStatementTransformer: Transformer<
-	GoAST.VariableDeclarationZeroValue | GoAST.ShortVariableDeclarationStatement
+	GoAST.VariableDeclarationZeroValue | GoAST.ShortVariableDeclarationStatement | GoAST.AssignmentStatement
 > = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isVariableStatement(node)) {
@@ -71,12 +127,13 @@ export const variableStatementTransformer: Transformer<
 			return context.error(node, "un-support-multiple-variable-declarations");
 		}
 
+		const isModuleVariable = TsAST.isSourceFile(node.parent);
+
 		if (!TsAST.isIdentifier(declaration.name)) {
-			return context.error(declaration, "un-support-variable-destructuring");
+			return transformLocalDestructuring(declaration, declaration.name, isModuleVariable, context);
 		}
 
 		const identifier = context.createSourceIdentifier(declaration.name.text);
-		const isModuleVariable = TsAST.isSourceFile(node.parent);
 
 		if (!declaration.initializer) {
 			if (!isModuleVariable) {

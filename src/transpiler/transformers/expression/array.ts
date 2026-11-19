@@ -7,7 +7,8 @@ import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { expressionTransformers } from ".";
 import { sequenceEvaluations } from "../shared";
-import { convertExpressionToType, transformCheckerType } from "../type/union";
+import { convertExpressionToType, getExpressionGoType } from "../type/union";
+import { expandAliases } from "../type/alias";
 
 /**
  * `[a, b]` → `[]T{a, b}` (tableau TS) ou `[2]T{a, b}` (tuple), d'après le type que le
@@ -25,17 +26,13 @@ export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral | GoAST.Arr
 			return context.error(node, "un-support-array-spread");
 		}
 
-		const sliceType = await transformCheckerType(
-			await context.transpilation.typeChecker.getTypeAtLocation(node),
-			node,
-			context,
-		);
+		const sliceType = await getExpressionGoType(node, context);
 
 		if (DEither.isLeft(sliceType)) {
 			return sliceType;
 		}
 
-		const goType = DEither.unwrapRight(sliceType);
+		const goType = expandAliases(DEither.unwrapRight(sliceType));
 
 		if (!DModeling.hasTagValue(goType, "[node][type]slice") && !DModeling.hasTagValue(goType, "[node][type]array")) {
 			return context.error(node, "un-support-array-literal-type");

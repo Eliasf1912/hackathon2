@@ -14,7 +14,7 @@ import { blockStatementTransformer } from "./block";
  * Une branche de `if` / `else`. Go exige un bloc : une branche qui n'est pas un bloc
  * (`if (a) return x;`) est enveloppée, avec ses calculs préalables.
  */
-async function transformBranch(statement: TsAST.Statement, context: BuildContext) {
+export async function transformBranch(statement: TsAST.Statement, context: BuildContext) {
 	if (TsAST.isBlock(statement)) {
 		return DCommon.asyncPipe(
 			context.transform(statement, [blockStatementTransformer]),

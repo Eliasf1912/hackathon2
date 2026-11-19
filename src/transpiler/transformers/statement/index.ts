@@ -7,6 +7,7 @@ import { blockStatementTransformer } from "./block";
 import { returnStatementTransformer } from "./return";
 import { variableStatementTransformer } from "./variable";
 import { ifStatementTransformer } from "./if";
+import { forOfStatementTransformer } from "./forOf";
 
 export const statementTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Statement>[] => [
@@ -16,5 +17,6 @@ export const statementTransformers = DCommon.memo(
 		returnStatementTransformer,
 		variableStatementTransformer,
 		ifStatementTransformer,
+		forOfStatementTransformer,
 	],
 );

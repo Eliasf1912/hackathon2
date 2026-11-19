@@ -7,6 +7,7 @@ import * as DArray from "@duplojs/lang/array";
 import { typeTransformers } from "../type";
 import * as DEither from "@duplojs/lang/either";
 import { blockStatementTransformer } from "../statement/block";
+import { transformParameter } from "../expression/function";
 import { type BuildContext } from "../../context/build";
 
 /**
@@ -51,53 +52,19 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 
 		const functionIdentifier = context.createSourceIdentifier(node.name.text);
 
-		const functionArguments = await DCommon.asyncPipe(
+		const parameters = await DCommon.asyncPipe(
 			node.parameters,
-			DArray.map(
-				(parameters) => DCommon.asyncPipe(
-					context.transform(
-						parameters.type ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword),
-						typeTransformers.value,
-					),
-					DEither.whenIsRight(
-						({ before, result }) => {
-							if (!DArray.lengthEqual(before, 0)) {
-								return context.error(parameters, "un-support-before-on-parameter");
-							}
-
-							if (!TsAST.isIdentifier(parameters.name)) {
-								return context.error(parameters, "params-name-is-not-identifier");
-							}
-
-							return GoAST.createFunctionArgument({
-								identifier: context.createSourceIdentifier(parameters.name.text),
-								type: result,
-							});
-						},
-					),
-				),
-			),
+			DArray.map((parameter) => transformParameter(parameter, context)),
 			DCommon.promiseAll,
-			DArray.reduce(
-				DArray.reduceFrom<readonly GoAST.FunctionArgument[]>([]),
-				({ element, lastValue, next, exit }) => {
-					if (DEither.isLeft(element)) {
-						return exit(element);
-					}
-
-					return next(
-						DArray.push(
-							lastValue,
-							element,
-						),
-					);
-				},
-			),
 		);
 
-		if (DEither.isLeft(functionArguments)) {
-			return functionArguments;
+		const failedParameter = DArray.find(parameters, DEither.isLeft);
+
+		if (failedParameter) {
+			return failedParameter;
 		}
+
+		const transformedParameters = DArray.map(DArray.filter(parameters, DEither.isRight), DEither.unwrapRight);
 
 		const returnType = await transformFunctionReturnType(node, context);
 
@@ -121,10 +88,20 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 		return context.success({
 			result: GoAST.createFunctionDeclaration({
 				identifier: functionIdentifier,
-				arguments: functionArguments,
+				arguments: DArray.map(transformedParameters, ({ argument }) => argument),
 				returnTypes: [DEither.unwrapRight(returnType)],
-				body: body.result,
-				generic: [],
+				// Paramètres déstructurés (`({ a, b }) =>`) : liés au début du corps.
+				body: GoAST.createBlockStatement({
+					statements: DArray.concat(
+						DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
+						body.result.statements,
+					),
+				}),
+				// `function ok<GenericBody>(…)` → `func ok[GenericBody any](…)`.
+				generic: DArray.map(node.typeParameters ?? [], ({ name }) => GoAST.createTypeParameter({
+					identifier: context.createSourceIdentifier(name.text),
+					constraint: GoAST.builtinTypeReferences.any,
+				})),
 			}),
 		});
 	},

@@ -13,7 +13,14 @@ import { stringTypeTransformer } from "./string";
 import { intersectionTypeTransformer } from "./intersection";
 import { nullishTypeTransformer } from "./nullish";
 import { promiseTypeTransformer } from "./promise";
+import { neverTypeTransformer } from "./never";
 import { functionTypeTransformer } from "./function";
+import {
+	declaredTypeTransformer,
+	objectLiteralTypeTransformer,
+	recordTypeTransformer,
+	typeParameterTransformer,
+} from "./object";
 
 export const typeTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Type | GoAST.TypeReference>[] => [
@@ -30,6 +37,11 @@ export const typeTransformers = DCommon.memo(
 		stringTypeTransformer,
 		intersectionTypeTransformer,
 		promiseTypeTransformer,
+		neverTypeTransformer,
 		functionTypeTransformer,
+		objectLiteralTypeTransformer,
+		recordTypeTransformer,
+		declaredTypeTransformer,
+		typeParameterTransformer,
 	],
 );

@@ -1,9 +1,11 @@
-import type { Checker } from "typescript/async";
+import type { Checker, Program } from "typescript/async";
 import type { SharedDependency } from "@transformer";
 import type * as DPath from "@duplojs/lang/path";
 
 export interface TranspilationContext {
 	readonly typeChecker: Checker;
+	// Pour lire une déclaration de type dans un autre fichier du projet.
+	readonly program: Program;
 	readonly projectWorkDirectory: string & DPath.Absolute;
 	readonly sharedDependencies: Set<SharedDependency>;
 	increment(): number;
@@ -11,6 +13,7 @@ export interface TranspilationContext {
 
 export interface CreateTranspilationContextParams {
 	typeChecker: Checker;
+	program: Program;
 	projectWorkDirectory: string & DPath.Absolute;
 }
 
@@ -21,6 +24,7 @@ export function createTranspilationContext(
 
 	const context: TranspilationContext = {
 		typeChecker: params.typeChecker,
+		program: params.program,
 		projectWorkDirectory: params.projectWorkDirectory,
 		sharedDependencies: new Set(),
 		increment() {

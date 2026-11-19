@@ -35,6 +35,59 @@ const createResolvedReference = DModeling.createTaggedObjectFactory<ResolvedRefe
 	"ResolvedReference",
 );
 
+/**
+ * Le nœud vient-il d'un fichier source ? Un nœud synthétisé par le checker
+ * (`typeToTypeNode`) peut porter une position recopiée (`pos >= 0`) sans appartenir à un
+ * fichier : le passer au checker le fait échouer. Seul un vrai nœud a un texte source.
+ */
+export function isSourceNode(node: TsAST.Node) {
+	return DEither.isRight(DEither.safeCallback(() => node.getText()));
+}
+
+// Symbole de module par nom de paquet (`@duplojs/lang/either`), trouvé une fois par
+// transpilation (un symbole n'a de sens que dans son programme).
+const importedModules = new Map<string, Symbol | undefined>();
+
+export function resetImportedModules() {
+	importedModules.clear();
+}
+
+/**
+ * Le checker écrit `import("@duplojs/lang/either").Left` même dans un fichier qui n'importe
+ * pas ce module. Le module est alors cherché dans un autre fichier du projet qui l'importe
+ * sous le même nom (un nom de paquet ne dépend pas du fichier, contrairement à `./x`).
+ */
+async function findImportedModule(path: string, context: BuildContext) {
+	if (DString.startsWith(path, ".")) {
+		return undefined;
+	}
+
+	if (importedModules.has(path)) {
+		return importedModules.get(path);
+	}
+
+	const { program, typeChecker } = context.transpilation;
+	let found: Symbol | undefined = undefined;
+
+	for (const fileName of await program.getSourceFileNames()) {
+		if (found || DString.includes(fileName, "/node_modules/")) {
+			continue;
+		}
+
+		const sourceFile = await program.getSourceFile(fileName);
+		const specifier = sourceFile && DArray.find(
+			sourceFile.imports,
+			(node) => TsAST.isStringLiteral(node) && node.text === path,
+		);
+
+		found = specifier && await typeChecker.getSymbolAtLocation(specifier);
+	}
+
+	importedModules.set(path, found);
+
+	return found;
+}
+
 async function resolveReferenceTarget(target: ModuleReference, context: BuildContext) {
 	const { typeChecker: checker } = context.transpilation;
 	const { sourceFile } = context.file;
@@ -44,7 +97,7 @@ async function resolveReferenceTarget(target: ModuleReference, context: BuildCon
 			return target;
 		}
 
-		if (target.pos >= 0) {
+		if (isSourceNode(target)) {
 			if (TsAST.isImportTypeNode(target)) {
 				return (await checker.getTypeFromTypeNode(target)).getSymbol();
 			}
@@ -82,7 +135,9 @@ async function resolveReferenceTarget(target: ModuleReference, context: BuildCon
 				sourceFile.imports,
 				(node) => TsAST.isStringLiteral(node) && node.text === path,
 			);
-			const module = specifier && await checker.getSymbolAtLocation(specifier);
+			const module = specifier
+				? await checker.getSymbolAtLocation(specifier)
+				: await findImportedModule(path, context);
 			return module && checker.getMemberInModuleExports(module, target.qualifier.text);
 		}
 
@@ -102,7 +157,7 @@ async function resolveReferenceTarget(target: ModuleReference, context: BuildCon
 	}
 
 	return DEither.some(createResolvedReference({
-		node: !(target instanceof Symbol) && target.pos >= 0 && !TsAST.isImportTypeNode(target)
+		node: !(target instanceof Symbol) && isSourceNode(target) && !TsAST.isImportTypeNode(target)
 			? target
 			: undefined,
 		symbol: resolved,
@@ -192,4 +247,127 @@ export async function resolveReferenceModule(
 		entry,
 		exportName: symbol.name,
 	});
+}
+
+export type ObjectTypeDeclaration = TsAST.InterfaceDeclaration | TsAST.TypeAliasDeclaration;
+
+export interface ResolvedTypeDeclaration {
+	readonly declaration: ObjectTypeDeclaration;
+	readonly filePath: string & DPath.Absolute;
+}
+
+function findTopLevelTypeDeclaration(sourceFile: TsAST.SourceFile, name: string) {
+	return DArray.find(
+		sourceFile.statements,
+		(statement): statement is ObjectTypeDeclaration => (
+			TsAST.isInterfaceDeclaration(statement) || TsAST.isTypeAliasDeclaration(statement)
+		) && statement.name.text === name,
+	);
+}
+
+/**
+ * `import("../models/product").Product` : le checker écrit ainsi un type d'un autre
+ * fichier, avec un chemin relatif au fichier courant, même quand celui-ci n'importe pas
+ * ce module. Le fichier est lu dans le programme, puis la déclaration y est cherchée.
+ */
+async function resolveImportTypeDeclaration(node: TsAST.ImportTypeNode, context: BuildContext) {
+	if (
+		node.isTypeOf
+		|| !node.qualifier
+		|| !TsAST.isIdentifier(node.qualifier)
+		|| !TsAST.isLiteralTypeNode(node.argument)
+		|| !TsAST.isStringLiteral(node.argument.literal)
+		|| !DString.startsWith(node.argument.literal.text, ".")
+	) {
+		return undefined;
+	}
+
+	const folder = DPath.getParentFolderPath(context.file.currentFilePath);
+	const specifier = node.argument.literal.text;
+	const name = node.qualifier.text;
+
+	if (!folder) {
+		return undefined;
+	}
+
+	// `./x` désigne `./x.ts` ou `./x/index.ts`.
+	const candidates = DArray.flatMap(
+		[`${specifier}.ts`, `${specifier}/index.ts`],
+		(relative) => {
+			const path = DEither.unwrapRight(DPath.create(relative));
+
+			if (DEither.isLeft(path)) {
+				return [];
+			}
+
+			const resolved = DPath.resolveFrom(folder, [path]);
+
+			return resolved ? [resolved] : [];
+		},
+	);
+
+	for (const candidate of candidates) {
+		const sourceFile = await context.transpilation.program.getSourceFile(candidate);
+		const declaration = sourceFile && findTopLevelTypeDeclaration(sourceFile, name);
+
+		if (declaration) {
+			return {
+				declaration,
+				filePath: candidate,
+			};
+		}
+	}
+
+	return undefined;
+}
+
+/**
+ * Déclaration d'un type du projet (`interface`, `type X = …`) désignée par une référence
+ * de type, ou `undefined` (type d'une bibliothèque, type global…).
+ */
+export async function resolveTypeDeclaration(
+	node: TsAST.TypeReferenceNode | TsAST.ImportTypeNode,
+	context: BuildContext,
+): Promise<ResolvedTypeDeclaration | undefined> {
+	if (TsAST.isImportTypeNode(node)) {
+		return resolveImportTypeDeclaration(node, context);
+	}
+
+	if (!TsAST.isIdentifier(node.typeName)) {
+		return undefined;
+	}
+
+	const { typeChecker: checker } = context.transpilation;
+	const found = isSourceNode(node.typeName)
+		? await checker.getSymbolAtLocation(node.typeName)
+		: await checker.resolveName(node.typeName.text, SymbolFlags.Type, context.file.sourceFile);
+	const symbol = found && (found.flags & SymbolFlags.Alias ? await checker.getAliasedSymbol(found) : found);
+	const handle = symbol && DArray.first(symbol.declarations);
+
+	if (
+		!handle
+		|| (
+			handle.kind !== TsAST.SyntaxKind.InterfaceDeclaration
+			&& handle.kind !== TsAST.SyntaxKind.TypeAliasDeclaration
+		)
+		|| DString.includes(handle.path, "/node_modules/")
+	) {
+		return undefined;
+	}
+
+	const declaration = await handle.resolve();
+	const filePath = DEither.unwrapRight(DPath.createAbsolute(handle.path));
+
+	if (
+		!declaration
+		|| DEither.isLeft(filePath)
+		|| (!TsAST.isInterfaceDeclaration(declaration) && !TsAST.isTypeAliasDeclaration(declaration))
+	) {
+		return undefined;
+	}
+
+	return {
+		declaration,
+		filePath,
+	};
 }

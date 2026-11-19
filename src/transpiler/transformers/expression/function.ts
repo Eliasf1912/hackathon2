@@ -7,6 +7,7 @@ import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { expressionTransformers } from ".";
 import { transformFunctionReturnType } from "../declaration/function";
+import { createBindings } from "./binding";
 import { blockStatementTransformer } from "../statement/block";
 import { typeTransformers } from "../type";
 import { convertExpressionToType, transformCheckerType } from "../type/union";
@@ -34,66 +35,15 @@ async function transformAnnotation(typeNode: TsAST.TypeNode, context: BuildConte
  * (souvent déduit du contexte : `(value) => …` passé à `rightPipe`).
  */
 /**
- * `[a, , b]` : chaque nom est lié à la position correspondante de `source`
- * (`a := source[0]`, `b := source[2]`). Tableau Go ou slice : même accès par index.
- *
- * Limite connue : éléments imbriqués (`[[a]]`), valeur par défaut (`[a = 1]`),
- * reste (`[...a]`) et déstructuration d'objet (`{ a }`).
- */
-function createArrayBindings(
-	pattern: TsAST.ArrayBindingPattern,
-	source: GoAST.Identifier,
-	context: BuildContext,
-) {
-	const bindings = DArray.map(pattern.elements, (element, { index }) => {
-		// Élément omis (`[, b]`) : sans nom en TS 7.
-		if (TsAST.isOmittedExpression(element) || !element.name) {
-			return DEither.right("binding", undefined);
-		}
-
-		if (!TsAST.isIdentifier(element.name) || element.initializer || element.dotDotDotToken) {
-			return context.error(element, "un-support-binding-element");
-		}
-
-		const name = context.createSourceIdentifier(element.name.text);
-
-		// `_ = name` : Go refuse une variable locale jamais lue, TS l'accepte.
-		return DEither.right("binding", [
-			GoAST.createShortVariableDeclarationStatement({
-				identifier: name,
-				initializer: GoAST.createIndexExpression({
-					target: source,
-					index: GoAST.createIntegerLiteral({ value: BigInt(index) }),
-				}),
-			}),
-			GoAST.createAssignmentStatement({
-				targets: DCommon.cast([GoAST.createIdentifier("_")]),
-				values: DCommon.cast([name]),
-			}),
-		] as readonly GoAST.Statement[]);
-	});
-
-	const failed = DArray.find(bindings, DEither.isLeft);
-
-	if (failed) {
-		return failed;
-	}
-
-	return DEither.right(
-		"bindings",
-		DArray.flatMap(
-			DArray.map(DArray.filter(bindings, DEither.isRight), DEither.unwrapRight),
-			(binding) => binding ?? [],
-		),
-	);
-}
-
-/**
  * Paramètre Go d'un paramètre TS, et les instructions qui lient ses noms quand il est
  * déstructuré (`([one, two]) => …` : paramètre généré, puis `one := p[0]`…).
  */
-async function transformParameter(parameter: TsAST.ParameterDeclaration, context: BuildContext) {
-	if (!TsAST.isIdentifier(parameter.name) && !TsAST.isArrayBindingPattern(parameter.name)) {
+export async function transformParameter(parameter: TsAST.ParameterDeclaration, context: BuildContext) {
+	if (
+		!TsAST.isIdentifier(parameter.name)
+		&& !TsAST.isArrayBindingPattern(parameter.name)
+		&& !TsAST.isObjectBindingPattern(parameter.name)
+	) {
 		return context.error(parameter, "params-name-is-not-identifier");
 	}
 
@@ -122,9 +72,9 @@ async function transformParameter(parameter: TsAST.ParameterDeclaration, context
 		return context.error(parameter, "un-support-binding-from-array");
 	}
 
-	const bindings = TsAST.isArrayBindingPattern(parameter.name)
-		? createArrayBindings(parameter.name, identifier, context)
-		: DEither.right("bindings", []);
+	const bindings = TsAST.isIdentifier(parameter.name)
+		? DEither.right("bindings", [] as readonly GoAST.Statement[])
+		: createBindings(parameter.name, identifier, context);
 
 	if (DEither.isLeft(bindings)) {
 		return bindings;
@@ -201,7 +151,12 @@ async function transformBlockBody(body: TsAST.Block, context: BuildContext) {
  */
 export const functionExpressionTransformer: Transformer<GoAST.FunctionLiteral> = createTransformer(
 	async(node, context) => {
-		if (!TsAST.isArrowFunction(node) && !TsAST.isFunctionExpression(node)) {
+		// Une méthode d'objet littéral (`{ findAll() { … } }`) est un champ de type fonction.
+		if (
+			!TsAST.isArrowFunction(node)
+			&& !TsAST.isFunctionExpression(node)
+			&& !(TsAST.isMethodDeclaration(node) && TsAST.isObjectLiteralExpression(node.parent))
+		) {
 			return context.notSupport();
 		}
 
@@ -225,6 +180,10 @@ export const functionExpressionTransformer: Transformer<GoAST.FunctionLiteral> =
 
 		if (DEither.isLeft(returnType)) {
 			return returnType;
+		}
+
+		if (!node.body) {
+			return context.error(node, "un-support-function-without-body");
 		}
 
 		const body = TsAST.isBlock(node.body)

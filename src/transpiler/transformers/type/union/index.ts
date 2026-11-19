@@ -5,9 +5,10 @@ import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { GoAST, GoPrinter } from "@go";
 import { TsAST } from "@typescript";
-import { createTransformer, sharedDependencyPackageName, type Transformer } from "@transformer";
+import { createTransformer, sharedDependencyPackageName, type TransformationError, type Transformer } from "@transformer";
 import { type BuildContext } from "../../../context/build";
 import { typeTransformers } from "..";
+import { expandAliases } from "../alias";
 import {
 	unionDependency,
 	unionTagFieldIdentifier,
@@ -18,11 +19,12 @@ import {
 export type GoType = GoAST.Type | GoAST.TypeReference;
 
 /**
- * Clé d'identité d'un type Go : son écriture.
+ * Clé d'identité d'un type Go : son écriture, alias dépliés (`Product` et sa struct sont le
+ * même type pour Go).
  * Deux types TS différents (`Success<1>`, `Success<2>`) peuvent donner le même type Go.
  */
 export function goTypeKey(type: GoType) {
-	return GoPrinter.renderNode(type);
+	return GoPrinter.renderNode(expandAliases(type));
 }
 
 /**
@@ -57,8 +59,17 @@ export function createUnionType(members: readonly GoType[], context: BuildContex
 	const uniqueMembers = DCommon.pipe(
 		new Map(DArray.map(members, (member) => [goTypeKey(member), member] as const)),
 		(byKey) => DArray.from(byKey.entries()),
-		// Comparaison par unités de code : indépendante de la locale de la machine.
+		// `undefined` d'abord : la valeur zéro de l'union (Tag 0) est alors `undefined`, et
+		// un champ optionnel en `omitzero` disparaît du JSON comme en JS. Le reste par unités
+		// de code : indépendant de la locale de la machine.
 		DArray.sort(([first], [second]) => {
+			const firstUndefined = first.endsWith(".JSUndefined");
+			const secondUndefined = second.endsWith(".JSUndefined");
+
+			if (firstUndefined !== secondUndefined) {
+				return firstUndefined ? -1 : 1;
+			}
+
 			if (first === second) {
 				return 0;
 			}
@@ -175,6 +186,136 @@ export async function transformCheckerType(
  *   reçoit la valeur (évaluée une fois). Une variante absente de la cible est impossible
  *   ici (TS l'a exclue) : `panic` si elle arrivait quand même.
  */
+function getStructFields(struct: GoAST.StructType) {
+	return DArray.filter(
+		struct.fields,
+		(field): field is GoAST.StructField => DModeling.hasTagValue(field, "[node]struct-field"),
+	);
+}
+
+function isUndefinedable(type: GoType) {
+	const members = getUnionType(type)?.typeArguments ?? [type];
+
+	return DArray.some(members, (member) => goTypeKey(member).endsWith(".JSUndefined"));
+}
+
+/**
+ * Struct vers struct de champs compatibles (objet littéral `{ code: "x" }` là où
+ * `{ code?: string }` est attendu) : chaque champ est converti, par une fonction appelée
+ * sur place qui reçoit la valeur (évaluée une fois).
+ *
+ * Refusé (erreur nommée) plutôt que traduit faux :
+ * - un champ attendu absent qui ne peut pas valoir `undefined` ;
+ * - un champ en trop : JS l'afficherait dans le JSON, Go le perdrait ;
+ * - un ordre de clés différent : le JSON de JS suit l'ordre d'insertion, celui de Go
+ *   l'ordre de la struct.
+ */
+type ConversionResult = TransformationError | DEither.Success<GoAST.Expression>;
+
+function convertStruct(
+	params: {
+		node: TsAST.Node;
+		expression: GoAST.Expression;
+		sourceStruct: GoAST.StructType;
+		targetStruct: GoAST.StructType;
+		targetType: GoType;
+	},
+	context: BuildContext,
+): ConversionResult {
+	const { node, expression, sourceStruct, targetStruct, targetType } = params;
+	const sourceFields = getStructFields(sourceStruct);
+	const targetFields = getStructFields(targetStruct);
+	const source = GoAST.createIdentifier("source");
+
+	const isTargetField = (field: GoAST.StructField) => DArray.some(
+		targetFields,
+		({ identifier }) => identifier.value === field.identifier.value,
+	);
+
+	if (!DArray.every(sourceFields, isTargetField)) {
+		return context.error(node, "un-support-object-extra-field");
+	}
+
+	const presentFields = DArray.filter(
+		targetFields,
+		(field) => DArray.some(sourceFields, ({ identifier }) => identifier.value === field.identifier.value),
+	);
+
+	const isSameOrder = DArray.every(
+		presentFields,
+		(field, { index }) => DArray.at(sourceFields, index)?.identifier.value === field.identifier.value,
+	);
+
+	if (!isSameOrder) {
+		return context.error(node, "un-support-object-key-order");
+	}
+
+	const elements: GoAST.KeyedElement<GoAST.Identifier>[] = [];
+
+	for (const field of targetFields) {
+		const sourceField = DArray.find(sourceFields, ({ identifier }) => identifier.value === field.identifier.value);
+
+		if (!sourceField) {
+			// Absent : la valeur zéro du champ, qui doit être `undefined` (voir `createUnionType`).
+			if (!isUndefinedable(field.typeReference)) {
+				return context.error(node, "un-support-object-missing-field");
+			}
+
+			continue;
+		}
+
+		const value = convertToType(
+			{
+				node,
+				expression: GoAST.createSelectorExpression({
+					target: source,
+					identifier: sourceField.identifier,
+				}),
+				sourceType: sourceField.typeReference,
+				targetType: field.typeReference,
+			},
+			context,
+		);
+
+		if (DEither.isLeft(value)) {
+			return value;
+		}
+
+		elements.push(GoAST.createKeyedElement({
+			key: field.identifier,
+			value: DEither.unwrapRight(value),
+		}));
+	}
+
+	return DEither.success(
+		GoAST.createCallExpression({
+			callee: GoAST.createFunctionLiteral({
+				arguments: [
+					GoAST.createFunctionArgument({
+						identifier: source,
+						type: sourceStruct,
+					}),
+				],
+				returnTypes: [targetType],
+				body: GoAST.createBlockStatement({
+					statements: [
+						GoAST.createReturnStatement({
+							values: [
+								GoAST.createStructLiteral({
+									// La struct dépliée : le même type Go que l'alias attendu.
+									typeReference: targetStruct,
+									elements,
+								}),
+							],
+						}),
+					],
+				}),
+			}),
+			arguments: [expression],
+		}),
+	);
+}
+
 interface VariantMapping {
 	sourceIndex: number;
 	targetIndex: number;
@@ -188,13 +329,44 @@ export function convertToType(
 		targetType: GoType;
 	},
 	context: BuildContext,
-) {
+): ConversionResult {
 	const { node, expression, sourceType, targetType } = params;
 	const sourceKey = goTypeKey(sourceType);
 	const targetKey = goTypeKey(targetType);
 
 	if (sourceKey === targetKey) {
 		return DEither.success(expression);
+	}
+
+	const sourceStruct = expandAliases(sourceType);
+	const targetStruct = expandAliases(targetType);
+
+	// Un tableau de `never` est forcément vide (`[]`) : le tableau vide du type attendu.
+	if (
+		DModeling.hasTagValue(sourceStruct, "[node][type]slice")
+		&& goTypeKey(sourceStruct.elementType).endsWith(".JSNever")
+		&& DModeling.hasTagValue(targetStruct, "[node][type]slice")
+	) {
+		return DEither.success(GoAST.createSliceLiteral({
+			typeReference: targetStruct,
+			elements: [],
+		}));
+	}
+
+	if (
+		DModeling.hasTagValue(sourceStruct, "[node][type]struct")
+		&& DModeling.hasTagValue(targetStruct, "[node][type]struct")
+	) {
+		return convertStruct(
+			{
+				node,
+				expression,
+				sourceStruct,
+				targetStruct,
+				targetType,
+			},
+			context,
+		);
 	}
 
 	const sourceUnion = getUnionType(sourceType);
@@ -211,6 +383,35 @@ export function convertToType(
 
 		if (index !== undefined) {
 			return DEither.success(createUnionValue(targetUnion, index, expression));
+		}
+
+		// Objet vers union d'objets (union discriminée) : le premier membre vers lequel il
+		// se convertit champ par champ. Les membres d'une union discriminée n'ont pas les
+		// mêmes champs ; ceux qui ne diffèrent que par la valeur littérale du discriminant
+		// ont le même type Go et sont déjà fusionnés.
+		if (DModeling.hasTagValue(sourceStruct, "[node][type]struct")) {
+			for (const [memberIndex, member] of targetUnion.typeArguments.entries()) {
+				const memberStruct = expandAliases(member);
+
+				if (!DModeling.hasTagValue(memberStruct, "[node][type]struct")) {
+					continue;
+				}
+
+				const converted = convertStruct(
+					{
+						node,
+						expression,
+						sourceStruct,
+						targetStruct: memberStruct,
+						targetType: member,
+					},
+					context,
+				);
+
+				if (DEither.isRight(converted)) {
+					return DEither.success(createUnionValue(targetUnion, memberIndex, DEither.unwrapRight(converted)));
+				}
+			}
 		}
 	}
 
@@ -353,6 +554,34 @@ export const unionTypeTransformer: Transformer<GoType> = createTransformer(
  * `convertToType` pour la valeur Go d'une expression TS : le type source est celui que
  * le checker donne à l'expression.
  */
+/**
+ * Type Go de la valeur que produit une expression : le type que le checker lui donne, sauf
+ * pour un littéral de tableau ou d'objet dans un contexte qui attend un tableau ou un objet
+ * (`const requests: readonly Request[] = [ … ]`, `const p: Product = { … }`) : il est
+ * produit directement dans le type attendu, chaque valeur convertie à sa place.
+ */
+export async function getExpressionGoType(node: TsAST.Expression, context: BuildContext) {
+	const { typeChecker } = context.transpilation;
+
+	if (TsAST.isArrayLiteralExpression(node) || TsAST.isObjectLiteralExpression(node)) {
+		const contextualType = await typeChecker.getContextualType(node);
+		const expectedType = contextualType && await transformCheckerType(contextualType, node, context);
+
+		if (expectedType && DEither.isRight(expectedType)) {
+			const expanded = expandAliases(DEither.unwrapRight(expectedType));
+			const isExpected = TsAST.isArrayLiteralExpression(node)
+				? DModeling.hasTagValue(expanded, "[node][type]slice") || DModeling.hasTagValue(expanded, "[node][type]array")
+				: DModeling.hasTagValue(expanded, "[node][type]struct") || DModeling.hasTagValue(expanded, "[node][type]map");
+
+			if (isExpected) {
+				return expectedType;
+			}
+		}
+	}
+
+	return transformCheckerType(await typeChecker.getTypeAtLocation(node), node, context);
+}
+
 export async function convertExpressionToType(
 	params: {
 		node: TsAST.Expression;
@@ -361,11 +590,7 @@ export async function convertExpressionToType(
 	},
 	context: BuildContext,
 ) {
-	const sourceType = await transformCheckerType(
-		await context.transpilation.typeChecker.getTypeAtLocation(params.node),
-		params.node,
-		context,
-	);
+	const sourceType = await getExpressionGoType(params.node, context);
 
 	if (DEither.isLeft(sourceType)) {
 		return sourceType;

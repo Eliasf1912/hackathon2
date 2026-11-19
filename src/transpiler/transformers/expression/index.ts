@@ -16,10 +16,13 @@ import { templateExpressionTransformer } from "./template";
 import { awaitExpressionTransformer } from "./await";
 import { parenthesizedExpressionTransformer } from "./parenthesized";
 import { regularExpressionTransformer } from "./regularExpression";
+import { objectLiteralTransformer } from "./object";
+import { builtinCallTransformer } from "./builtin";
 
 export const expressionTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Expression>[] => [
 		...duploJSExpressionTransformers.value,
+		builtinCallTransformer,
 		...sharedExpressionTransformers.value,
 		nullishLiteralTransformer,
 		identifierTransformer,
@@ -35,5 +38,6 @@ export const expressionTransformers = DCommon.memo(
 		awaitExpressionTransformer,
 		parenthesizedExpressionTransformer,
 		regularExpressionTransformer,
+		objectLiteralTransformer,
 	],
 );

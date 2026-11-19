@@ -12,6 +12,8 @@ import { createFile, type CreateFileParams } from "./createFile";
 import { sharedDependencyPackageName } from "@transformer";
 import { createSourcePackageLayout, goModuleContent } from "./sourcePackage";
 import { defaultSharedDependencies } from "./sharedDependency/defaults";
+import { resetAliases } from "./transformers/type/alias";
+import { resetImportedModules } from "./resolvedReference";
 
 export function build(
 	typescriptInstance: DInvocation.GetEvidenceResult<
@@ -20,8 +22,12 @@ export function build(
 	>,
 	input: string & DPath.Absolute,
 ) {
+	resetAliases();
+	resetImportedModules();
+
 	const context = createTranspilationContext({
 		typeChecker: typescriptInstance.project.checker,
+		program: typescriptInstance.project.program,
 		projectWorkDirectory: typescriptInstance.projectWorkDirectory,
 	});
 
