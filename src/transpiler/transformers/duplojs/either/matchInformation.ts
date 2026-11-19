@@ -7,7 +7,7 @@ import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
-import { createFunctionValueCall, getDeclaredParameterCount } from "../../shared";
+import { createFunctionValueCall, getDeclaredParameterCount, getFunctionValueSignature } from "../../shared";
 import {
 	convertToType,
 	createUnionTagTest,
@@ -18,6 +18,7 @@ import {
 	type GoType,
 } from "../../type/union";
 import { createCurriedFunction } from "../curried";
+import { chainBranches, flattenChain, getVariants, type Branch } from "./dispatch";
 import { createNullishReference } from "../../expression/nullish";
 import { bindOnce } from "./isRight";
 import { getEitherVariant, informationFieldIdentifier, valueFieldIdentifier } from "./sharedDependency";
@@ -33,11 +34,6 @@ interface Handler {
 	parameterCount: number;
 	parameterType?: GoType;
 	returnType: GoType;
-}
-
-interface Branch {
-	test?: GoAST.Expression;
-	statements: readonly GoAST.Statement[];
 }
 
 type HandlerResult = TransformationError | NotfoundTransformer | DEither.Right<"handler", Handler>;
@@ -71,7 +67,7 @@ async function prepareHandler(property: TsAST.ObjectLiteralElementLike, context:
 		return transformed;
 	}
 
-	const signature = DArray.first(await (await typeChecker.getTypeAtLocation(handlerNode)).getCallSignatures());
+	const signature = await getFunctionValueSignature(handlerNode, context);
 
 	if (!signature) {
 		return context.error(handlerNode, "un-support-matcher-handler-type");
@@ -107,38 +103,6 @@ async function prepareHandler(property: TsAST.ObjectLiteralElementLike, context:
 		parameterType: parameterType && DEither.unwrapRight(parameterType),
 		returnType: DEither.unwrapRight(returnType),
 	});
-}
-
-/**
- * `if test0 {…} else if test1 {…} else {…}` ; la dernière branche sert de `else`
- * (TS garantit qu'une des branches s'applique).
- */
-function chainBranches(branches: readonly Branch[]) {
-	const last = DArray.last(branches);
-
-	return DArray.reduceRight(
-		DArray.slice(branches, 0, -1),
-		DArray.reduceFrom<GoAST.BlockStatement | GoAST.IfStatement | undefined>(
-			last && GoAST.createBlockStatement({ statements: last.statements }),
-		),
-		({ element, lastValue, next }) => next(
-			GoAST.createIfStatement({
-				condition: element.test ?? GoAST.createBooleanLiteral({ value: true }),
-				body: GoAST.createBlockStatement({ statements: element.statements }),
-				elseBranch: lastValue,
-			}),
-		),
-	);
-}
-
-function flattenChain(chain: GoAST.BlockStatement | GoAST.IfStatement | undefined): readonly GoAST.Statement[] {
-	if (!chain) {
-		return [];
-	}
-
-	return DModeling.hasTagValue(chain, "[node][statement]if")
-		? [chain]
-		: chain.statements;
 }
 
 /**
@@ -181,19 +145,7 @@ function applyMatch(
 	const output = context.generateIdentifier();
 	const usedHandlers = new Set<Handler>();
 
-	const variants = unionType
-		? DArray.map(unionType.typeArguments, (type, { index }) => ({
-			type,
-			access: createUnionVariantAccess(boundInput.result, index),
-			tagTest: createUnionTagTest(boundInput.result, index) as GoAST.Expression | undefined,
-		}))
-		: [
-			{
-				type: inputType,
-				access: boundInput.result as GoAST.Expression,
-				tagTest: undefined,
-			},
-		];
+	const variants = getVariants(boundInput.result, inputType);
 
 	const assignOutput = (expression: GoAST.Expression, sourceType: GoType, test?: GoAST.Expression) => {
 		const value = convertToType(

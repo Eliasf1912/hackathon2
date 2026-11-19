@@ -111,7 +111,12 @@ async function logicalExpressionHandler(
 	});
 }
 
-export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression | GoAST.Identifier> = createTransformer(
+// Un seul objet : `file.imports` est un `Set`, l'import n'est ajouté qu'une fois.
+const mathImport = GoAST.createImportDeclaration({ path: "math" });
+
+export const binaryExpressionTransformer: Transformer<
+	GoAST.BinaryExpression | GoAST.Identifier | GoAST.CallExpression
+> = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isBinaryExpression(node)) {
 			return context.notSupport();
@@ -163,13 +168,31 @@ export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression | G
 			initializer: right.result,
 		});
 
+		const before = DArray.concat(
+			left.before,
+			[leftAssignment],
+			right.before,
+			[rightAssignment],
+		);
+
+		// Go n'a pas de `%` sur les flottants ; `math.Mod` garde le signe du dividende, comme JS.
+		if (operator === "%") {
+			context.file.imports.add(mathImport);
+
+			return context.success({
+				before,
+				result: GoAST.createCallExpression({
+					callee: GoAST.createSelectorExpression({
+						target: GoAST.createIdentifier("math"),
+						identifier: GoAST.createIdentifier("Mod"),
+					}),
+					arguments: [leftAssignment.identifier, rightAssignment.identifier],
+				}),
+			});
+		}
+
 		return context.success({
-			before: DArray.concat(
-				left.before,
-				[leftAssignment],
-				right.before,
-				[rightAssignment],
-			),
+			before,
 			result: GoAST.createBinaryExpression({
 				operator,
 				right: rightAssignment.identifier,

@@ -2,6 +2,7 @@ import * as DArray from "@duplojs/lang/array";
 import { GoAST } from "@go";
 import { type TsAST } from "@typescript";
 import { type BuildContext } from "../../context/build";
+import { getInstantiatedSignature } from "./instantiatedSignature";
 
 /**
  * Nombre de paramètres que déclare une fonction passée en valeur (`() => [-12]` : 0).
@@ -80,4 +81,20 @@ export function adaptFunctionValue(
 			],
 		}),
 	});
+}
+
+/**
+ * Signature d'une fonction passée en valeur : la sienne, sauf si elle est générique
+ * (`DString.to`) ; alors celle que le contexte instancie (`(value: number) => string`).
+ */
+export async function getFunctionValueSignature(functionNode: TsAST.Expression, context: BuildContext) {
+	const own = DArray.first(
+		await (await context.transpilation.typeChecker.getTypeAtLocation(functionNode)).getCallSignatures(),
+	);
+
+	if (own && !own.typeParameters?.length) {
+		return own;
+	}
+
+	return await getInstantiatedSignature(functionNode, context) ?? own;
 }
