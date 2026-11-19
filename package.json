@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:types": "./.commands/test-types.sh",
-    "test:lint": "./.commands/test-lint.sh"
+    "test:lint": "./.commands/test-lint.sh",
+    "test:stress": "tsx --tsconfig tsconfig.app.json test_stress.ts"
   },
   "devEngines": {
     "packageManager": {

@@ -104,6 +104,67 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 					],
 				}),
 			}),
+			GoAST.createMethodDeclaration({
+				identifier: GoAST.createIdentifier("IsRight"),
+				receiver: [
+					GoAST.createIdentifier("e"),
+					successTypeReference,
+				],
+				generic: [],
+				arguments: [],
+				returnTypes: [GoAST.builtinTypeReferences.bool],
+				body: GoAST.createBlockStatement({
+					statements: [
+						GoAST.createReturnStatement({
+							values: [GoAST.createBooleanLiteral({ value: true })],
+						}),
+					],
+				}),
+			}),
+			GoAST.createMethodDeclaration({
+				identifier: GoAST.createIdentifier("GetEitherValue"),
+				receiver: [
+					GoAST.createIdentifier("e"),
+					successTypeReference,
+				],
+				generic: [],
+				arguments: [],
+				returnTypes: [GoAST.builtinTypeReferences.any],
+				body: GoAST.createBlockStatement({
+					statements: [
+						GoAST.createReturnStatement({
+							values: [
+								GoAST.createSelectorExpression({
+									target: GoAST.createIdentifier("e"),
+									identifier: GoAST.createIdentifier("Value"),
+								}),
+							],
+						}),
+					],
+				}),
+			}),
+			GoAST.createMethodDeclaration({
+				identifier: GoAST.createIdentifier("GetEitherInformation"),
+				receiver: [
+					GoAST.createIdentifier("e"),
+					successTypeReference,
+				],
+				generic: [],
+				arguments: [],
+				returnTypes: [GoAST.builtinTypeReferences.string],
+				body: GoAST.createBlockStatement({
+					statements: [
+						GoAST.createReturnStatement({
+							values: [
+								GoAST.createSelectorExpression({
+									target: GoAST.createIdentifier("e"),
+									identifier: GoAST.createIdentifier("Information"),
+								}),
+							],
+						}),
+					],
+				}),
+			}),
 		],
 	});
 });

@@ -34,7 +34,6 @@ export async function createTypescriptInstance(
 
 	const projectWorkDirectory = DCommon.pipe(
 		api.getCurrentDirectory(),
-		(directory) => api.getCanonicalFileName(directory),
 		DPath.createAbsolute,
 		DEither.unwrapRight,
 	);

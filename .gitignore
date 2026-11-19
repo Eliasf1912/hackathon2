@@ -6,3 +6,25 @@ _bmad-output/
 .agents/
 _bmad/
 .claude/
+*.m4a
+*.mp3
+*.wav
+
+# Documentation locale confidentielle
+SOUTENANCE.md
+DOCUMENTATION_COMPLETE.md
+MISE_EN_COMMUN.md
+HISTORIQUE_DES_MODIFICATIONS.md
+EVOLUTION_DU_CODE_PAR_ETAPES.md
+MESURES_ET_PREUVES_PERFORMANCES.md
+PROBLEMATIQUES_ET_SOLUTIONS.md
+RAPPORT_TESTS_LIMITES.md
+GUIDE_DOSSIERS_TRANSPILEUR.md
+ANALYSE_GARDES_ET_FUSION_CHANGRUI.md
+COMPARAISON_*.md
+changrui.md
+elias.md
+lytween.md
+note.md
+evolution_projets/
+documentation_transpileur.zip
