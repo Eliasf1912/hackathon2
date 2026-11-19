@@ -18,31 +18,29 @@ export const coalescingArrayIdentifier = GoAST.createIdentifier("CoalescingArray
  * `[valeur]` est un tuple TS (`readonly [number]`), donc un tableau Go `[1]T`.
  * `CoalescingArray` ne fait rien : générique sur le type entier, il vaut pour une slice
  * comme pour un tableau `[N]T`.
+ *
+ * Chaque fonction est une dépendance distincte : seule celle qui est appelée est émise.
  */
-export const coalescingDependency = DCommon.memo(() => {
-	const generic = GoAST.createIdentifier("T");
-	const value = GoAST.createIdentifier("value");
-	const tupleType = GoAST.createArrayType({
-		length: GoAST.createIntegerLiteral({ value: 1n }),
-		elementType: generic,
-	});
-	const typeParameter = GoAST.createTypeParameter({
-		identifier: generic,
-		constraint: GoAST.builtinTypeReferences.any,
-	});
+const generic = GoAST.createIdentifier("T");
+const value = GoAST.createIdentifier("value");
 
-	const createFunction = (
-		identifier: GoAST.Identifier,
-		argumentType: GoAST.Identifier,
-		returnType: GoAST.Identifier | GoAST.ArrayType,
-		result: GoAST.Expression,
-	) => GoAST.createFunctionDeclaration({
+function createCoalescingFunction(
+	identifier: GoAST.Identifier,
+	returnType: GoAST.Identifier | GoAST.ArrayType,
+	result: GoAST.Expression,
+) {
+	return GoAST.createFunctionDeclaration({
 		identifier,
-		generic: [typeParameter],
+		generic: [
+			GoAST.createTypeParameter({
+				identifier: generic,
+				constraint: GoAST.builtinTypeReferences.any,
+			}),
+		],
 		arguments: [
 			GoAST.createFunctionArgument({
 				identifier: value,
-				type: argumentType,
+				type: generic,
 			}),
 		],
 		returnTypes: [returnType],
@@ -50,21 +48,34 @@ export const coalescingDependency = DCommon.memo(() => {
 			statements: [GoAST.createReturnStatement({ values: [result] })],
 		}),
 	});
+}
+
+export const coalescingValueDependency = DCommon.memo(() => {
+	const tupleType = GoAST.createArrayType({
+		length: GoAST.createIntegerLiteral({ value: 1n }),
+		elementType: generic,
+	});
 
 	return createSharedDependency({
 		imports: [],
 		init: [],
 		declarations: [
-			createFunction(
+			createCoalescingFunction(
 				coalescingValueIdentifier,
-				generic,
 				tupleType,
 				GoAST.createArrayLiteral({
 					typeReference: tupleType,
 					elements: [value],
 				}),
 			),
-			createFunction(coalescingArrayIdentifier, generic, generic, value),
 		],
 	});
 });
+
+export const coalescingArrayDependency = DCommon.memo(
+	() => createSharedDependency({
+		imports: [],
+		init: [],
+		declarations: [createCoalescingFunction(coalescingArrayIdentifier, generic, value)],
+	}),
+);

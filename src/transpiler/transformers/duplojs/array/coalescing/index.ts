@@ -5,7 +5,7 @@ import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer, getInstantiatedSignature } from "../../../shared";
 import { transformCheckerType } from "../../../type/union";
-import { coalescingArrayIdentifier, coalescingDependency, coalescingValueIdentifier } from "./sharedDependency";
+import { coalescingArrayDependency, coalescingArrayIdentifier, coalescingValueDependency, coalescingValueIdentifier } from "./sharedDependency";
 
 /**
  * `DArray.coalescing` → `shard_dependencies.CoalescingValue[T]` ou `CoalescingArray[T]`,
@@ -42,7 +42,9 @@ export async function coalescingExpressionHandler(node: TsAST.Node, context: Bui
 	return context.success({
 		result: GoAST.createInstantiationExpression({
 			target: GoAST.createSelectorExpression({
-				target: context.registerSharedDependency(coalescingDependency.value),
+				target: context.registerSharedDependency(
+					isArray ? coalescingArrayDependency.value : coalescingValueDependency.value,
+				),
 				identifier: isArray ? coalescingArrayIdentifier : coalescingValueIdentifier,
 			}),
 			// `CoalescingArray[A]` : le type entier (slice ou tableau) ; `CoalescingValue[T]` : la valeur.
