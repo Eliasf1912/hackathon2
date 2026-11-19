@@ -10,11 +10,15 @@ import { prefixUnaryExpressionTransformer } from "./unary";
 import { booleanLiteralTransformer, stringLiteralTransformer } from "./literal";
 import { arrayLiteralTransformer } from "./array";
 import { functionExpressionTransformer } from "./function";
+import { conditionalExpressionTransformer } from "./conditional";
+import { nullishLiteralTransformer } from "./nullish";
+import { templateExpressionTransformer } from "./template";
 
 export const expressionTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Expression>[] => [
 		...duploJSExpressionTransformers.value,
 		...sharedExpressionTransformers.value,
+		nullishLiteralTransformer,
 		identifierTransformer,
 		numericLiteralTransformer,
 		stringLiteralTransformer,
@@ -23,5 +27,7 @@ export const expressionTransformers = DCommon.memo(
 		prefixUnaryExpressionTransformer,
 		arrayLiteralTransformer,
 		functionExpressionTransformer,
+		conditionalExpressionTransformer,
+		templateExpressionTransformer,
 	],
 );

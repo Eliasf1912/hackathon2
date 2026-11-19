@@ -1,10 +1,16 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
-import { createIsRightMethod, informationFieldIdentifier } from "../sharedDependency";
+import { createIsRightMethod, declareEitherVariant, informationFieldIdentifier } from "../sharedDependency";
 
 export const failTypeIdentifier = GoAST.createIdentifier("EitherFail");
 export const failFunctionIdentifier = GoAST.createIdentifier("EitherFailOf");
+
+declareEitherVariant(failTypeIdentifier, {
+	kinds: ["left", "fail"],
+	information: "fail",
+	hasValue: false,
+});
 
 /**
  * `DEither.Fail`. Forme JSON DuploJS (vérifiée avec `JSON.stringify(DEither.fail())`) :

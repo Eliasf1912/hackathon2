@@ -80,10 +80,11 @@ export function build(
 				}
 
 				const file = DCommon.pipe(
-					DGenerator.concat(
+					// Un `Set` : une dépendance par défaut (`JSNull`) peut aussi être enregistrée.
+					new Set(DGenerator.concat(
 						defaultSharedDependencies.value,
 						context.sharedDependencies,
-					),
+					)),
 					DGenerator.reduce(
 						DGenerator.reduceFrom<CreateFileParams>({
 							packageName: sharedDependencyPackageName,

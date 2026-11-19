@@ -12,26 +12,52 @@ export const isRightMethodIdentifier = GoAST.createIdentifier("IsRight");
 export const informationFieldIdentifier = GoAST.createIdentifier("Information");
 export const valueFieldIdentifier = GoAST.createIdentifier("Value");
 
-/**
- * Types Go des variantes Right, qui portent leur valeur dans le champ `Value`.
- * Les déclarer ici permet de savoir, sur le type Go seul, quels membres d'une union
- * sont des Right (DuploJS les marque par des clés symboles, que le checker n'expose pas
- * sous un nom lisible).
- */
-const rightVariantTypeNames = new Set<string>();
+export type EitherVariantKind = "right" | "left" | "success" | "fail" | "error";
 
-export function declareRightVariantType(identifier: GoAST.Identifier) {
-	rightVariantTypeNames.add(identifier.value);
+/**
+ * Ce que le transpiler sait d'une variante Go d'Either, sur son seul type :
+ * ses genres DuploJS (`EitherError` est un `left` et un `error`), son `information`
+ * quand elle est fixe (`"success"`, `"fail"`, `"error"`), et si elle porte une valeur
+ * (champ `Value` ; `EitherFail` n'en a pas).
+ */
+export interface EitherVariantDescription {
+	kinds: readonly EitherVariantKind[];
+	information?: string;
+	hasValue: boolean;
 }
 
-export function isRightVariantType(type: GoType) {
+/**
+ * Registre des variantes, par nom de type Go dans `shard_dependencies`. Il le faut parce
+ * que DuploJS marque ses variantes par des clés symboles, que le checker n'expose pas
+ * sous un nom lisible. Chaque variante s'y déclare au chargement de son module.
+ */
+const eitherVariants = new Map<string, EitherVariantDescription>();
+
+export function declareEitherVariant(identifier: GoAST.Identifier, description: EitherVariantDescription) {
+	eitherVariants.set(identifier.value, description);
+}
+
+export function getEitherVariant(type: GoType) {
 	const reference = DModeling.hasTagValue(type, "[node]type-reference-generic")
 		? type.typeReference
 		: type;
 
-	return DModeling.hasTagValue(reference, "[node]type-reference-package")
-		&& reference.packageName.value === sharedDependencyPackageName.value
-		&& rightVariantTypeNames.has(reference.identifier.value);
+	if (
+		!DModeling.hasTagValue(reference, "[node]type-reference-package")
+		|| reference.packageName.value !== sharedDependencyPackageName.value
+	) {
+		return undefined;
+	}
+
+	return eitherVariants.get(reference.identifier.value);
+}
+
+export function hasEitherVariantKind(type: GoType, kind: EitherVariantKind) {
+	return getEitherVariant(type)?.kinds.includes(kind) ?? false;
+}
+
+export function isRightVariantType(type: GoType) {
+	return hasEitherVariantKind(type, "right");
 }
 
 /**

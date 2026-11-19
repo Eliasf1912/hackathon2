@@ -20,6 +20,27 @@ function numberToString(context: BuildContext) {
 }
 
 /**
+ * Conversion JS d'une valeur en texte (`${value}`), choisie d'après son type Go :
+ * `string` telle quelle, `float64` par `NumberToString`. Partagée avec les gabarits.
+ */
+export function createToStringExpression(value: GoAST.Expression, type: GoType, context: BuildContext) {
+	const key = goTypeKey(type);
+
+	if (key === stringKey) {
+		return value;
+	}
+
+	if (key !== float64Key) {
+		return undefined;
+	}
+
+	return GoAST.createCallExpression({
+		callee: numberToString(context),
+		arguments: [value],
+	});
+}
+
+/**
  * `DString.to(value)` : `${value}` en JS. La conversion dépend du type, connu à la
  * compilation :
  * - `float64` → `shard_dependencies.NumberToString(value)` (écriture JS des nombres) ;
@@ -57,22 +78,15 @@ export async function toExpressionHandler(node: TsAST.Node, context: BuildContex
 			return valueType;
 		}
 
-		const key = goTypeKey(DEither.unwrapRight(valueType));
+		const converted = createToStringExpression(value.result, DEither.unwrapRight(valueType), context);
 
-		if (key === stringKey) {
-			return context.success(value);
-		}
-
-		if (key !== float64Key) {
+		if (!converted) {
 			return context.error(node, "un-support-to-value-type");
 		}
 
 		return context.success({
 			before: value.before,
-			result: GoAST.createCallExpression({
-				callee: numberToString(context),
-				arguments: [value.result],
-			}),
+			result: converted,
 		});
 	}
 

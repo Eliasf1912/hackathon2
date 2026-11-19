@@ -1,12 +1,16 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
-import { createIsRightMethod, declareRightVariantType, informationFieldIdentifier, valueFieldIdentifier } from "../sharedDependency";
+import { createIsRightMethod, declareEitherVariant, informationFieldIdentifier, valueFieldIdentifier } from "../sharedDependency";
 
 export const successFunctionIdentifier = GoAST.createIdentifier("EitherSuccessOf");
 export const successTypeIdentifier = GoAST.createIdentifier("EitherSuccess");
 
-declareRightVariantType(successTypeIdentifier);
+declareEitherVariant(successTypeIdentifier, {
+	kinds: ["right", "success"],
+	information: "success",
+	hasValue: true,
+});
 
 export const eitherSuccessDependency = DCommon.memo(() => {
 	const generic = GoAST.createIdentifier("T");

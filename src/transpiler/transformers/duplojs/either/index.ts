@@ -8,6 +8,8 @@ import { successExpressionHandler, successTypeHandler } from "./success";
 import { failExpressionHandler, failTypeHandler } from "./fail";
 import { isRightExpressionHandler } from "./isRight";
 import { whenIsRightExpressionHandler, whenIsRightOtherwiseExpressionHandler } from "./whenIsRight";
+import { matchInformationExpressionHandler } from "./matchInformation";
+import { eitherVariantExpressionHandler, eitherVariantTypeHandler, eitherVariants } from "./variant";
 
 export const duploJSEitherDeclarationTransformer: Transformer<GoAST.Declaration> = createTransformer(
 	(_node, context) => context.notSupport(),
@@ -57,6 +59,22 @@ export const duploJSEitherExpressionTransformer: Transformer<GoAST.Expression> =
 				() => whenIsRightExpressionHandler(node, context),
 			),
 			DPattern.match(
+				DCommon.equal("matchInformation"),
+				() => matchInformationExpressionHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("left"),
+				() => eitherVariantExpressionHandler(node, eitherVariants.left, context),
+			),
+			DPattern.match(
+				DCommon.equal("right"),
+				() => eitherVariantExpressionHandler(node, eitherVariants.right, context),
+			),
+			DPattern.match(
+				DCommon.equal("error"),
+				() => eitherVariantExpressionHandler(node, eitherVariants.error, context),
+			),
+			DPattern.match(
 				DCommon.equal("whenIsRightOtherwise"),
 				() => whenIsRightOtherwiseExpressionHandler(node, context),
 			),
@@ -95,6 +113,18 @@ export const duploJSEitherTypeTransformer: Transformer<
 			DPattern.match(
 				DCommon.equal("Fail"),
 				() => failTypeHandler(context),
+			),
+			DPattern.match(
+				DCommon.equal("Left"),
+				() => eitherVariantTypeHandler(node, eitherVariants.left, context),
+			),
+			DPattern.match(
+				DCommon.equal("Right"),
+				() => eitherVariantTypeHandler(node, eitherVariants.right, context),
+			),
+			DPattern.match(
+				DCommon.equal("Error"),
+				() => eitherVariantTypeHandler(node, eitherVariants.error, context),
 			),
 			DPattern.otherwise(
 				() => context.notSupport(),
