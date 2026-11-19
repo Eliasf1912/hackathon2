@@ -70,17 +70,23 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 			node,
 		) ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword);
 
-		const returnType = await DCommon.asyncPipe(
-			context.transform(returnTypeNode, typeTransformers.value),
-			DEither.unwrapRight,
-		);
+		let returnTypes: readonly GoAST.FunctionDeclarationReturnType[] = [];
 
-		if (DEither.isLeft(returnType)) {
-			return returnType;
-		}
+		if (returnTypeNode.kind !== TsAST.SyntaxKind.VoidKeyword) {
+			const returnType = await DCommon.asyncPipe(
+				context.transform(returnTypeNode, typeTransformers.value),
+				DEither.unwrapRight,
+			);
 
-		if (!DArray.lengthEqual(returnType.before, 0)) {
-			return context.error(returnTypeNode, "un-support-before-on-return-type");
+			if (DEither.isLeft(returnType)) {
+				return returnType;
+			}
+
+			if (!DArray.lengthEqual(returnType.before, 0)) {
+				return context.error(returnTypeNode, "un-support-before-on-return-type");
+			}
+
+			returnTypes = [returnType.result];
 		}
 
 		const body = await DCommon.asyncPipe(
@@ -100,7 +106,7 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 			result: GoAST.createFunctionDeclaration({
 				identifier: functionIdentifier,
 				arguments: functionArguments,
-				returnTypes: [returnType.result],
+				returnTypes,
 				body: body.result,
 				generic: [],
 			}),
