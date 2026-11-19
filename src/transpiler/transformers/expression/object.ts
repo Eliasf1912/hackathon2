@@ -45,11 +45,14 @@ async function transformValue(valueNode: TsAST.Expression | TsAST.MethodDeclarat
 		return value;
 	}
 
-	const type = await transformCheckerType(
-		await context.transpilation.typeChecker.getTypeAtLocation(valueNode),
-		valueNode,
-		context,
-	);
+	// Le type de la valeur Go produite (un littéral imbriqué est produit dans son type attendu).
+	const type = TsAST.isMethodDeclaration(valueNode)
+		? await transformCheckerType(
+			await context.transpilation.typeChecker.getTypeAtLocation(valueNode),
+			valueNode,
+			context,
+		)
+		: await getExpressionGoType(valueNode, context);
 
 	return DEither.isLeft(type)
 		? type

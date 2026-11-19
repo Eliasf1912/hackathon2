@@ -3,7 +3,7 @@ import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import { GoAST } from "@go";
-import { createTransformer, type Transformer } from "@transformer";
+import { createTransformer, transform, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { NodeBuilderFlags, SymbolFlags } from "typescript/async";
 import { type BuildContext } from "../../context/build";
@@ -335,9 +335,17 @@ export const declaredTypeTransformer: Transformer<GoType> = createTransformer(
 			return context.error(node, "un-support-recursive-type");
 		}
 
+		// Calculée seulement pour le registre : ce fichier ne référence que l'alias, les
+		// paquets des types de ses champs n'y sont pas importés (un import inutilisé est une
+		// erreur Go). Contexte dérivé, sans effet sur les traductions qui tournent en parallèle.
+		const registryContext: BuildContext = {
+			...context,
+			transform: (data, transformers) => transform(data, transformers, registryContext),
+			registerDependencyFile: ({ filePath }) => context.createSourceIdentifier(filePath),
+		};
 		const struct = members && await resolvingDeclarations.run(
 			new Set([...chain, declaration]),
-			() => createStructFromMembers(declaration, members, context),
+			() => createStructFromMembers(declaration, members, registryContext),
 		);
 
 		if (struct && DEither.isLeft(struct)) {
@@ -470,5 +478,43 @@ export const readonlyUtilityTypeTransformer: Transformer<GoType> = createTransfo
 				? type.result
 				: GoAST.createSliceType({ elementType: type.result }),
 		});
+	},
+);
+
+const computedUtilityTypes = new Set(["ReturnType", "Awaited", "Parameters", "InstanceType", "NonNullable"]);
+
+/**
+ * Type utilitaire de TS calculé par le checker (`ReturnType<typeof f>`, `Awaited<T>`…) :
+ * le type qu'il désigne, demandé au checker puis traduit.
+ */
+export const computedUtilityTypeTransformer: Transformer<GoType> = createTransformer(
+	async(node, context) => {
+		if (
+			!TsAST.isTypeReferenceNode(node)
+			|| !TsAST.isIdentifier(node.typeName)
+			|| !computedUtilityTypes.has(node.typeName.text)
+			|| !isSourceNode(node)
+		) {
+			return context.notSupport();
+		}
+
+		const { typeChecker } = context.transpilation;
+		const computed = await typeChecker.typeToTypeNode(
+			await typeChecker.getTypeFromTypeNode(node),
+			node,
+			NodeBuilderFlags.NoTruncation | NodeBuilderFlags.InTypeAlias,
+		);
+
+		// Le checker réécrit parfois le type par lui-même : ne pas boucler.
+		const isUnchanged = computed
+			&& TsAST.isTypeReferenceNode(computed)
+			&& TsAST.isIdentifier(computed.typeName)
+			&& computedUtilityTypes.has(computed.typeName.text);
+
+		if (!computed || isUnchanged) {
+			return context.error(node, "un-support-utility-type");
+		}
+
+		return context.transform(computed, typeTransformers.value);
 	},
 );

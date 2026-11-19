@@ -7,6 +7,9 @@ import { TsAST } from "@typescript";
 import { coalescingExpressionHandler } from "./coalescing";
 import { mapExpressionHandler } from "./map";
 import { collectionExpressionHandler } from "./collection";
+import { reduceExpressionHandler } from "./reduce";
+
+export { duploJSArrayTypeTransformer } from "./reduce";
 
 /**
  * Fonctions du domaine `@duplojs/lang/array` (`DArray.*`).
@@ -43,6 +46,10 @@ export const duploJSArrayExpressionTransformer: Transformer<GoAST.Expression> = 
 			DPattern.match(
 				DCommon.equal("map"),
 				() => mapExpressionHandler(node, context),
+			),
+			DPattern.match(
+				(name) => name === "reduce" || name === "reduceFrom",
+				(name) => reduceExpressionHandler(node, name, context),
 			),
 			DPattern.match(
 				(name) => ["filter", "some", "find", "concat", "lengthEqual"].includes(name),

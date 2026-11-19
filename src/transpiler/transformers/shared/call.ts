@@ -6,6 +6,9 @@ import { expressionTransformers } from "../expression";
 import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
 import * as DModeling from "@duplojs/lang/modeling";
+import { type BuildContext } from "../../context/build";
+import { canBeUndefined } from "../expression/object";
+import { convertExpressionToType, getUnionType, transformCheckerType } from "../type/union";
 
 /**
  * Référence simple : `f` ou `pkg.F` (sélecteur sur un identifiant), sans calcul préalable.
@@ -34,6 +37,75 @@ function isSimpleReference(callee: TransformedCallee) {
 
 	return DModeling.hasTagValue(callee.result, "[node][expression]selector")
 		&& DModeling.hasTagValue(callee.result.target, "[node]identifier");
+}
+
+/**
+ * Arguments convertis vers le type des paramètres de la signature résolue (`b?: number`
+ * est une union avec `undefined`) ; un paramètre optionnel absent reçoit `undefined`
+ * (valeur zéro de l'union, variante 0).
+ */
+async function convertArguments(
+	node: TsAST.CallExpression,
+	transformed: readonly GoAST.Expression[],
+	context: BuildContext,
+) {
+	const { typeChecker } = context.transpilation;
+	const signature = await typeChecker.getResolvedSignature(node);
+
+	if (!signature || signature.hasRestParameter) {
+		return DEither.right("arguments", transformed);
+	}
+
+	const converted: GoAST.Expression[] = [];
+
+	for (const index of signature.parameters.keys()) {
+		const parameterType = await transformCheckerType(
+			await typeChecker.getParameterType(signature, index),
+			node,
+			context,
+		);
+
+		// shortcut: paramètre sans type Go (type calculé d'une bibliothèque) : arguments
+		// laissés tels quels, à revoir si Go les refuse.
+		if (DEither.isLeft(parameterType)) {
+			return DEither.right("arguments", transformed);
+		}
+
+		const targetType = DEither.unwrapRight(parameterType);
+		const argument = node.arguments[index];
+		const expression = transformed[index];
+
+		if (!argument || !expression) {
+			const union = getUnionType(targetType);
+
+			if (!union || !canBeUndefined(union)) {
+				return context.error(node, "un-support-missing-argument");
+			}
+
+			converted.push(GoAST.createStructLiteral({
+				typeReference: union,
+				elements: [],
+			}));
+			continue;
+		}
+
+		const value = await convertExpressionToType(
+			{
+				node: argument,
+				expression,
+				targetType,
+			},
+			context,
+		);
+
+		if (DEither.isLeft(value)) {
+			return value;
+		}
+
+		converted.push(DEither.unwrapRight(value));
+	}
+
+	return DEither.right("arguments", converted as readonly GoAST.Expression[]);
 }
 
 export const callExpressionTransformer: Transformer<GoAST.CallExpression> = createTransformer(
@@ -107,6 +179,12 @@ export const callExpressionTransformer: Transformer<GoAST.CallExpression> = crea
 			return argumentsResult;
 		}
 
+		const callArguments = await convertArguments(node, argumentsResult.arguments, context);
+
+		if (DEither.isLeft(callArguments)) {
+			return callArguments;
+		}
+
 		return context.success({
 			before: calledDirectly
 				? argumentsResult.before
@@ -119,7 +197,7 @@ export const callExpressionTransformer: Transformer<GoAST.CallExpression> = crea
 				callee: calledDirectly
 					? callee.result
 					: functionVariableStatement.identifier,
-				arguments: argumentsResult.arguments,
+				arguments: DEither.unwrapRight(callArguments),
 			}),
 		});
 	},

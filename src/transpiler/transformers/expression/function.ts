@@ -10,7 +10,8 @@ import { transformFunctionReturnType } from "../declaration/function";
 import { createBindings } from "./binding";
 import { blockStatementTransformer } from "../statement/block";
 import { typeTransformers } from "../type";
-import { convertExpressionToType, transformCheckerType } from "../type/union";
+import { convertExpressionToType, createUnionType, transformCheckerType } from "../type/union";
+import { createNullishReference } from "./nullish";
 import { type BuildContext } from "../../context/build";
 
 async function transformAnnotation(typeNode: TsAST.TypeNode, context: BuildContext) {
@@ -59,6 +60,15 @@ export async function transformParameter(parameter: TsAST.ParameterDeclaration, 
 		return type;
 	}
 
+	// Paramètre optionnel (`code?: string`) : il peut valoir `undefined`.
+	const optionalType = parameter.questionToken
+		? createUnionType([DEither.unwrapRight(type), createNullishReference("undefined", context)], context)
+		: DEither.unwrapRight(type);
+
+	if (!optionalType) {
+		return context.error(parameter, "un-support-optional-parameter");
+	}
+
 	const identifier = TsAST.isIdentifier(parameter.name)
 		? context.createSourceIdentifier(parameter.name.text)
 		: context.generateIdentifier();
@@ -83,10 +93,36 @@ export async function transformParameter(parameter: TsAST.ParameterDeclaration, 
 	return DEither.right("parameter", {
 		argument: GoAST.createFunctionArgument({
 			identifier,
-			type: DEither.unwrapRight(type),
+			type: optionalType,
 		}),
 		bindings: DEither.unwrapRight(bindings) as readonly GoAST.Statement[],
 	});
+}
+
+/**
+ * TS garantit qu'une fonction non-`void` renvoie sur tous les chemins ; Go ne le voit pas
+ * après un `switch` ou un `if/else` exhaustif (`missing return`). Le corps qui ne finit
+ * pas par `return` se termine par `panic`, jamais atteint.
+ */
+export function terminateBody(
+	statements: readonly GoAST.Statement[],
+	returnType: GoAST.Type | GoAST.TypeReference | undefined,
+): readonly GoAST.Statement[] {
+	const last = DArray.last(statements);
+
+	if (!returnType || (last && DModeling.hasTagValue(last, "[node][statement]return"))) {
+		return statements;
+	}
+
+	return DArray.concat(
+		statements,
+		[
+			GoAST.createCallExpression({
+				callee: GoAST.createIdentifier("panic"),
+				arguments: [GoAST.createStringLiteral({ value: "unreachable" })],
+			}),
+		],
+	);
 }
 
 /**
@@ -225,9 +261,12 @@ export const functionExpressionTransformer: Transformer<GoAST.FunctionLiteral> =
 				arguments: DArray.map(transformedParameters, ({ argument }) => argument),
 				returnTypes: DCommon.pipe(DEither.unwrapRight(returnType), (type) => (type ? [type] : [])),
 				body: GoAST.createBlockStatement({
-					statements: DArray.concat(
-						DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
-						DEither.unwrapRight(body).statements,
+					statements: terminateBody(
+						DArray.concat(
+							DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
+							DEither.unwrapRight(body).statements,
+						),
+						DEither.unwrapRight(returnType),
 					),
 				}),
 			}),

@@ -150,6 +150,69 @@ const collectionDependency = DCommon.memo(() => {
 					elements: [],
 				})),
 			]),
+			// `dictionnaire[clé]` : `undefined` si la clé est absente, comme en JS.
+			GoAST.createFunctionDeclaration({
+				identifier: GoAST.createIdentifier("MapGet"),
+				generic: [typeParameter],
+				arguments: [
+					GoAST.createFunctionArgument({
+						identifier: array,
+						type: GoAST.createMapType({
+							keyType: GoAST.builtinTypeReferences.string,
+							valueType: generic,
+						}),
+					}),
+					GoAST.createFunctionArgument({
+						identifier: element,
+						type: GoAST.builtinTypeReferences.string,
+					}),
+				],
+				returnTypes: [optional],
+				body: block([
+					GoAST.createVariableDeclarationZeroValue({
+						identifier: result,
+						typeReference: generic,
+					}),
+					GoAST.createVariableDeclarationZeroValue({
+						identifier: GoAST.createIdentifier("found"),
+						typeReference: GoAST.builtinTypeReferences.bool,
+					}),
+					GoAST.createAssignmentStatement({
+						targets: DCommon.cast([result, GoAST.createIdentifier("found")]),
+						values: DCommon.cast([
+							GoAST.createIndexExpression({
+								target: array,
+								index: element,
+							}),
+						]),
+					}),
+					GoAST.createIfStatement({
+						condition: GoAST.createUnaryExpression({
+							operator: "!",
+							operand: GoAST.createIdentifier("found"),
+						}),
+						body: block([
+							returnValue(GoAST.createStructLiteral({
+								typeReference: optional,
+								elements: [],
+							})),
+						]),
+					}),
+					returnValue(GoAST.createStructLiteral({
+						typeReference: optional,
+						elements: [
+							GoAST.createKeyedElement({
+								key: unionTagFieldIdentifier,
+								value: GoAST.createIntegerLiteral({ value: 1n }),
+							}),
+							GoAST.createKeyedElement({
+								key: unionValueFieldIdentifier(1),
+								value: result,
+							}),
+						],
+					})),
+				]),
+			}),
 			declareFunction(
 				"Concat",
 				sliceOfGeneric,
@@ -201,6 +264,10 @@ function sharedCall(name: string, callArguments: readonly GoAST.Expression[], co
  * Limite connue : une fonction qui utilise le 2ᵉ paramètre (`{ index, self }`) ; un
  * prédicat de garde de type (`filter(x, isRight)`) qui change le type des éléments.
  */
+export function createMapGet(map: GoAST.Expression, key: GoAST.Expression, context: BuildContext) {
+	return sharedCall("MapGet", [map, key], context);
+}
+
 export function collectionExpressionHandler(node: TsAST.Node, name: string, context: BuildContext) {
 	if (name === "lengthEqual") {
 		return simpleFunctionHandler(

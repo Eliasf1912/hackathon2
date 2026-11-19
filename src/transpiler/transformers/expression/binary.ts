@@ -8,7 +8,7 @@ import * as DArray from "@duplojs/lang/array";
 import { type BuildContext } from "../../context/build";
 import { createToStringExpression } from "../duplojs/string/to";
 import { importStandardPackage } from "../shared";
-import { goTypeKey, transformCheckerType } from "../type/union";
+import { getUnionType, goTypeKey, transformCheckerType } from "../type/union";
 
 const binaryOperators: Partial<
 	Record<TsAST.SyntaxKind, GoAST.BinaryOperator>
@@ -174,12 +174,100 @@ async function createConcatenation(
 	});
 }
 
+function getNullishKind(node: TsAST.Expression) {
+	if (node.kind === TsAST.SyntaxKind.NullKeyword) {
+		return "JSNull";
+	}
+
+	return TsAST.isIdentifier(node) && node.text === "undefined" ? "JSUndefined" : undefined;
+}
+
+/**
+ * `x === undefined`, `x !== null`… : Go ne compare pas une union à `JSUndefined`. Sur une
+ * union, c'est un test de la variante (`x.Tag == 0`) ; sinon le type dit déjà la réponse
+ * (`x` est évalué, puis une constante). `===` ne confond pas `undefined` et `null`.
+ */
+async function createNullishComparison(node: TsAST.BinaryExpression, context: BuildContext) {
+	const kind = node.operatorToken.kind;
+
+	if (kind !== TsAST.SyntaxKind.EqualsEqualsEqualsToken && kind !== TsAST.SyntaxKind.ExclamationEqualsEqualsToken) {
+		return undefined;
+	}
+
+	const nullish = getNullishKind(node.right) ?? getNullishKind(node.left);
+	const valueNode = getNullishKind(node.right) ? node.left : node.right;
+
+	if (!nullish || getNullishKind(valueNode)) {
+		return undefined;
+	}
+
+	const valueType = await transformCheckerType(
+		await context.transpilation.typeChecker.getTypeAtLocation(valueNode),
+		valueNode,
+		context,
+	);
+
+	if (DEither.isLeft(valueType)) {
+		return valueType;
+	}
+
+	const value = await DCommon.asyncPipe(
+		context.transform(valueNode, expressionTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(value)) {
+		return value;
+	}
+
+	const isEqual = kind === TsAST.SyntaxKind.EqualsEqualsEqualsToken;
+	const union = getUnionType(DEither.unwrapRight(valueType));
+	const index = union
+		? union.typeArguments.findIndex((member) => goTypeKey(member).endsWith(`.${nullish}`))
+		: -1;
+
+	if (union && index !== -1) {
+		return context.success({
+			before: value.before,
+			result: GoAST.createBinaryExpression({
+				operator: isEqual ? "==" : "!=",
+				left: GoAST.createSelectorExpression({
+					target: value.result,
+					identifier: GoAST.createIdentifier("Tag"),
+				}),
+				right: GoAST.createIntegerLiteral({ value: BigInt(index) }),
+			}),
+		});
+	}
+
+	const isAlwaysNullish = goTypeKey(DEither.unwrapRight(valueType)).endsWith(`.${nullish}`);
+
+	return context.success({
+		before: DArray.concat(
+			value.before,
+			[
+				GoAST.createAssignmentStatement({
+					targets: DCommon.cast([GoAST.createIdentifier("_")]),
+					values: DCommon.cast([value.result]),
+				}),
+			],
+		),
+		result: GoAST.createBooleanLiteral({ value: isAlwaysNullish === isEqual }),
+	});
+}
+
 export const binaryExpressionTransformer: Transformer<
-	GoAST.BinaryExpression | GoAST.Identifier | GoAST.CallExpression
+	GoAST.BinaryExpression | GoAST.Identifier | GoAST.CallExpression | GoAST.BooleanLiteral
 > = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isBinaryExpression(node)) {
 			return context.notSupport();
+		}
+
+		const nullishComparison = await createNullishComparison(node, context);
+
+		if (nullishComparison) {
+			return nullishComparison;
 		}
 
 		if (bitwiseOperators.has(node.operatorToken.kind)) {

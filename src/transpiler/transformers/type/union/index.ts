@@ -56,8 +56,11 @@ export function getUnionType(type: GoType) {
  *   ne change donc pas le type Go : `A | B` et `B | A` donnent le même.
  */
 export function createUnionType(members: readonly GoType[], context: BuildContext) {
+	// Une union dans une union (`Promise<A> | Promise<B | C>`, promesses retirées) est
+	// aplatie, comme TS le fait : `A | B | C`.
+	const flatMembers = DArray.flatMap(members, (member) => getUnionType(member)?.typeArguments ?? [member]);
 	const uniqueMembers = DCommon.pipe(
-		new Map(DArray.map(members, (member) => [goTypeKey(member), member] as const)),
+		new Map(DArray.map(flatMembers, (member) => [goTypeKey(member), member] as const)),
 		(byKey) => DArray.from(byKey.entries()),
 		// `undefined` d'abord : la valeur zéro de l'union (Tag 0) est alors `undefined`, et
 		// un champ optionnel en `omitzero` disparaît du JSON comme en JS. Le reste par unités
@@ -577,6 +580,38 @@ export async function getExpressionGoType(node: TsAST.Expression, context: Build
 				return expectedType;
 			}
 		}
+
+		// Objet attendu dans une union d'objets (`Request`) : produit directement dans le
+		// membre choisi par `convertToType`, comme le checker le fait pour les objets imbriqués.
+		const union = expectedType && DEither.isRight(expectedType) && getUnionType(DEither.unwrapRight(expectedType));
+		const ownType = await transformCheckerType(await typeChecker.getTypeAtLocation(node), node, context);
+
+		if (union && TsAST.isObjectLiteralExpression(node) && DEither.isRight(ownType)) {
+			const sourceStruct = expandAliases(DEither.unwrapRight(ownType));
+			const member = DModeling.hasTagValue(sourceStruct, "[node][type]struct")
+				? DArray.find(union.typeArguments, (candidate) => {
+					const targetStruct = expandAliases(candidate);
+
+					return DModeling.hasTagValue(targetStruct, "[node][type]struct")
+						&& DEither.isRight(convertStruct(
+							{
+								node,
+								expression: GoAST.createIdentifier("_"),
+								sourceStruct,
+								targetStruct,
+								targetType: candidate,
+							},
+							context,
+						));
+				})
+				: undefined;
+
+			if (member) {
+				return DEither.success(member);
+			}
+		}
+
+		return ownType;
 	}
 
 	return transformCheckerType(await typeChecker.getTypeAtLocation(node), node, context);

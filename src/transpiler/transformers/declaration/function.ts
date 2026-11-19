@@ -7,7 +7,7 @@ import * as DArray from "@duplojs/lang/array";
 import { typeTransformers } from "../type";
 import * as DEither from "@duplojs/lang/either";
 import { blockStatementTransformer } from "../statement/block";
-import { transformParameter } from "../expression/function";
+import { terminateBody, transformParameter } from "../expression/function";
 import { type BuildContext } from "../../context/build";
 
 /**
@@ -97,9 +97,12 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 				returnTypes: DCommon.pipe(DEither.unwrapRight(returnType), (type) => (type ? [type] : [])),
 				// Paramètres déstructurés (`({ a, b }) =>`) : liés au début du corps.
 				body: GoAST.createBlockStatement({
-					statements: DArray.concat(
-						DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
-						body.result.statements,
+					statements: terminateBody(
+						DArray.concat(
+							DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
+							body.result.statements,
+						),
+						DEither.unwrapRight(returnType),
 					),
 				}),
 				// `function ok<GenericBody>(…)` → `func ok[GenericBody any](…)`.

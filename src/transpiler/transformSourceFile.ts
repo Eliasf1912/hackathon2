@@ -61,6 +61,26 @@ async function transformObjectTypeDeclaration(
 	);
 }
 
+function collectIdentifierValues(node: unknown, values = new Set<string>()): Set<string> {
+	if (Array.isArray(node)) {
+		for (const child of node as readonly unknown[]) {
+			collectIdentifierValues(child, values);
+		}
+	} else if (typeof node === "object" && node !== null) {
+		const identifier = node as GoAST.Identifier;
+
+		if (DModeling.hasTagValue(identifier, "[node]identifier")) {
+			values.add(identifier.value);
+		}
+
+		for (const child of Object.values(node) as readonly unknown[]) {
+			collectIdentifierValues(child, values);
+		}
+	}
+
+	return values;
+}
+
 export async function transformSourceFile(
 	sourceFile: TsAST.SourceFile,
 	transpilationContext: TranspilationContext,
@@ -142,8 +162,19 @@ export async function transformSourceFile(
 		return content;
 	}
 
+	// Un type peut être calculé sans être écrit (rétrécissement, destructuration) : seuls
+	// les paquets réellement nommés dans le code Go sont importés.
+	const usedIdentifiers = collectIdentifierValues([
+		content.declarations,
+		content.init,
+		DArray.from(fileContext.declarations),
+	]);
+
 	const dependencyImports = DCommon.pipe(
-		fileContext.dependencyFiles,
+		DArray.filter(
+			DArray.from(fileContext.dependencyFiles),
+			(filePath) => usedIdentifiers.has(context.createSourceIdentifier(filePath).value),
+		),
 		DGenerator.reduce(
 			DGenerator.reduceFrom<readonly GoAST.ImportDeclaration[]>([]),
 			({ item, lastValue, next, exit }) => {

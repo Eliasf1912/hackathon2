@@ -11,6 +11,7 @@ import { forOfStatementTransformer } from "./forOf";
 import { assignmentStatementTransformer } from "./assignment";
 import { localFunctionTransformer } from "./localFunction";
 import { expressionStatementTransformer } from "./expression";
+import { switchStatementTransformer } from "./switch";
 
 export const statementTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Statement>[] => [
@@ -23,6 +24,7 @@ export const statementTransformers = DCommon.memo(
 		variableStatementTransformer,
 		ifStatementTransformer,
 		forOfStatementTransformer,
+		switchStatementTransformer,
 		expressionStatementTransformer,
 	],
 );
