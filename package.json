@@ -14,6 +14,7 @@
     "build:09": "pnpm build --tsconfig projects/09/tsconfig.json --input projects/09/index.ts --output projects/09/dist",
     "build:10": "pnpm build --tsconfig projects/10/tsconfig.json --input projects/10/index.ts --output projects/10/dist",
     "build:11": "pnpm build --tsconfig projects/11/tsconfig.json --input projects/11/index.ts --output projects/11/dist",
+    "build:12": "pnpm build --tsconfig projects/12/tsconfig.json --input projects/12/index.ts --output projects/12/dist",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:types": "./.commands/test-types.sh",
