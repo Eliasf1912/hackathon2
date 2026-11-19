@@ -1,6 +1,7 @@
 import { type Transformer } from "@transformer";
 import { GoAST } from "@go";
 import { TsAST } from "@typescript";
+import { NodeBuilderFlags } from "typescript/async";
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
@@ -17,12 +18,44 @@ export async function successExpressionHandler(
 		return context.transform(node, [callExpressionTransformer]);
 	}
 
+	const call = node.parent;
+	const valueNode = TsAST.isCallExpression(call) && call.expression === node
+		? DArray.first(call.arguments)
+		: undefined;
+
+	if (!valueNode) {
+		return context.notSupport();
+	}
+
+	const { typeChecker } = context.transpilation;
+	const valueType = await typeChecker.getBaseTypeOfLiteralType(
+		await typeChecker.getTypeAtLocation(valueNode),
+	);
+	const valueTypeNode = await typeChecker.typeToTypeNode(valueType, call, NodeBuilderFlags.NoTruncation);
+
+	if (!valueTypeNode) {
+		return context.error(valueNode, "unresolved-success-value-type");
+	}
+
+	const typeArgument = await DCommon.asyncPipe(
+		context.transform(valueTypeNode, typeTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(typeArgument)) {
+		return typeArgument;
+	}
+
 	const packageName = context.registerSharedDependency(eitherSuccessDependency.value);
 
 	return context.success({
-		result: GoAST.createSelectorExpression({
-			target: packageName,
-			identifier: successFunctionIdentifier,
+		before: typeArgument.before,
+		result: GoAST.createInstantiationExpression({
+			target: GoAST.createSelectorExpression({
+				target: packageName,
+				identifier: successFunctionIdentifier,
+			}),
+			typeArguments: DCommon.cast([typeArgument.result]),
 		}),
 	});
 }

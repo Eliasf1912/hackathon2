@@ -6,6 +6,13 @@ import { identifierTransformer } from "../common";
 import { numericLiteralTransformer } from "./numericLiteral";
 import { sharedExpressionTransformers } from "../shared";
 import { binaryExpressionTransformer } from "./binary";
+import { unaryExpressionTransformer } from "./unary";
+import { arrowFunctionTransformer } from "./arrowFunction";
+import { arrayLiteralTransformer } from "./arrayLiteral";
+import { stringLiteralTransformer } from "./stringLiteral";
+import { logicalExpressionTransformer } from "./logical";
+import { conditionalExpressionTransformer } from "./conditional";
+import { awaitExpressionTransformer } from "./await";
 
 export const expressionTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Expression>[] => [
@@ -13,6 +20,13 @@ export const expressionTransformers = DCommon.memo(
 		...sharedExpressionTransformers.value,
 		identifierTransformer,
 		numericLiteralTransformer,
+		stringLiteralTransformer,
+		logicalExpressionTransformer,
 		binaryExpressionTransformer,
+		conditionalExpressionTransformer,
+		awaitExpressionTransformer,
+		unaryExpressionTransformer,
+		arrowFunctionTransformer,
+		arrayLiteralTransformer,
 	],
 );

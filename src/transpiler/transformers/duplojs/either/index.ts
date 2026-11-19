@@ -5,6 +5,14 @@ import type { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import * as DPattern from "@duplojs/lang/pattern";
 import { successExpressionHandler, successTypeHandler } from "./success";
+import { isRightExpressionHandler } from "./isRight";
+import { whenIsRightExpressionHandler } from "./whenIsRight";
+import { failExpressionHandler, failTypeHandler } from "./fail";
+import { whenIsRightOtherwiseExpressionHandler } from "./whenIsRightOtherwise";
+import { leftExpressionHandler, leftTypeHandler } from "./left";
+import { matchInformationExpressionHandler } from "./matchInformation";
+import { rightPipeExpressionHandler } from "./rightPipe";
+import { groupExpressionHandler } from "./group";
 
 export const duploJSEitherDeclarationTransformer: Transformer<GoAST.Declaration> = createTransformer(
 	(_node, context) => context.notSupport(),
@@ -41,6 +49,63 @@ export const duploJSEitherExpressionTransformer: Transformer<GoAST.Expression> =
 					context,
 				),
 			),
+			DPattern.match(
+				DCommon.equal("isRight"),
+				() => isRightExpressionHandler(
+					node,
+					context,
+				),
+			),
+			DPattern.match(
+				DCommon.equal("whenIsRight"),
+				() => whenIsRightExpressionHandler(
+					node,
+					context,
+				),
+			),
+			DPattern.match(
+				DCommon.equal("fail"),
+				() => failExpressionHandler(
+					node,
+					context,
+				),
+			),
+			DPattern.match(
+				DCommon.equal("whenIsRightOtherwise"),
+				() => whenIsRightOtherwiseExpressionHandler(
+					node,
+					context,
+				),
+			),
+			DPattern.match(
+				DCommon.equal("left"),
+				() => leftExpressionHandler(
+					node,
+					context,
+				),
+			),
+			DPattern.match(
+				DCommon.equal("matchInformation"),
+				() => matchInformationExpressionHandler(
+					node,
+					context,
+				),
+			),
+			// Asynchronism is translated synchronously: the async forms share the handlers.
+			DPattern.match(
+				(name) => DCommon.equal(name, "rightPipe") || DCommon.equal(name, "rightAsyncPipe"),
+				() => rightPipeExpressionHandler(
+					node,
+					context,
+				),
+			),
+			DPattern.match(
+				(name) => DCommon.equal(name, "group") || DCommon.equal(name, "asyncGroup"),
+				() => groupExpressionHandler(
+					node,
+					context,
+				),
+			),
 			DPattern.otherwise(
 				() => context.error(node),
 			),
@@ -48,7 +113,10 @@ export const duploJSEitherExpressionTransformer: Transformer<GoAST.Expression> =
 	},
 );
 
-export const duploJSEitherTypeTransformer: Transformer<GoAST.GenericTypeReference> = createTransformer(
+export const duploJSEitherTypeTransformer: Transformer<
+	| GoAST.GenericTypeReference
+	| GoAST.PackageTypeReference
+> = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isTypeReferenceNode(node) && !TsAST.isImportTypeNode(node)) {
 			return context.notSupport();
@@ -70,6 +138,14 @@ export const duploJSEitherTypeTransformer: Transformer<GoAST.GenericTypeReferenc
 			DPattern.match(
 				DCommon.equal("Success"),
 				() => successTypeHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("Fail"),
+				() => failTypeHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("Left"),
+				() => leftTypeHandler(node, context),
 			),
 			DPattern.otherwise(
 				() => context.notSupport(),
