@@ -18,6 +18,7 @@ import { parenthesizedExpressionTransformer } from "./parenthesized";
 import { regularExpressionTransformer } from "./regularExpression";
 import { objectLiteralTransformer } from "./object";
 import { builtinCallTransformer } from "./builtin";
+import { propertyAccessTransformer } from "./propertyAccess";
 
 export const expressionTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Expression>[] => [
@@ -39,5 +40,6 @@ export const expressionTransformers = DCommon.memo(
 		parenthesizedExpressionTransformer,
 		regularExpressionTransformer,
 		objectLiteralTransformer,
+		propertyAccessTransformer,
 	],
 );

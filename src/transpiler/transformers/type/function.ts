@@ -22,10 +22,11 @@ export const functionTypeTransformer: Transformer<GoAST.FunctionType> = createTr
 			return context.error(node, "un-support-generic-function-type");
 		}
 
+		const returnsVoid = node.type?.kind === TsAST.SyntaxKind.VoidKeyword;
 		const types = await DCommon.asyncPipe(
 			DArray.concat(
 				DArray.map(node.parameters, (parameter) => parameter.type),
-				[node.type],
+				returnsVoid ? [] : [node.type],
 			),
 			DArray.map(async(typeNode) => {
 				if (!typeNode) {
@@ -55,9 +56,10 @@ export const functionTypeTransformer: Transformer<GoAST.FunctionType> = createTr
 			(type): type is Exclude<typeof type, DEither.Left> => !DEither.isLeft(type),
 		);
 
-		const returnType = DArray.last(transformedTypes);
+		const returnType = returnsVoid ? undefined : DArray.last(transformedTypes);
+		const parameterTypes = returnsVoid ? transformedTypes : DArray.slice(transformedTypes, 0, -1);
 
-		if (!returnType) {
+		if (!returnsVoid && !returnType) {
 			return context.error(node, "un-support-function-type");
 		}
 
@@ -65,13 +67,13 @@ export const functionTypeTransformer: Transformer<GoAST.FunctionType> = createTr
 			before: DArray.flatMap(transformedTypes, ({ before }) => before),
 			result: GoAST.createFunctionType({
 				arguments: DArray.map(
-					DArray.slice(transformedTypes, 0, -1),
+					parameterTypes,
 					({ result }) => GoAST.createFunctionArgument({
 						identifier: GoAST.createIdentifier("_"),
 						type: result,
 					}),
 				),
-				returnTypes: [returnType.result],
+				returnTypes: returnType ? [returnType.result] : [],
 			}),
 		});
 	},

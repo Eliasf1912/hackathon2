@@ -9,6 +9,7 @@ import { importStandardPackage } from "../../shared";
 import { simpleFunctionHandler } from "../simpleFunction";
 import { toExpressionHandler } from "./to";
 import { stringLengthDependency, stringLengthIdentifier } from "./length";
+import { padStartDependency, padStartIdentifier } from "./padStart";
 
 /**
  * `DString.includes(text, search)` → `strings.Contains(text, search)`.
@@ -113,6 +114,24 @@ export const duploJSStringExpressionTransformer: Transformer<GoAST.Expression> =
 			DPattern.match(
 				DCommon.equal("test"),
 				() => testExpressionHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("padStart"),
+				() => simpleFunctionHandler(
+					{
+						node,
+						name: "padStart",
+						arity: 3,
+						build: ([text, length, pad]) => text && length && pad && GoAST.createCallExpression({
+							callee: GoAST.createSelectorExpression({
+								target: context.registerSharedDependency(padStartDependency.value),
+								identifier: padStartIdentifier,
+							}),
+							arguments: [text, length, pad],
+						}),
+					},
+					context,
+				),
 			),
 			DPattern.match(
 				DCommon.equal("length"),

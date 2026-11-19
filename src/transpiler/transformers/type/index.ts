@@ -20,6 +20,7 @@ import {
 	objectLiteralTypeTransformer,
 	recordTypeTransformer,
 	typeParameterTransformer,
+	readonlyUtilityTypeTransformer,
 } from "./object";
 
 export const typeTransformers = DCommon.memo(
@@ -41,6 +42,7 @@ export const typeTransformers = DCommon.memo(
 		functionTypeTransformer,
 		objectLiteralTypeTransformer,
 		recordTypeTransformer,
+		readonlyUtilityTypeTransformer,
 		declaredTypeTransformer,
 		typeParameterTransformer,
 	],

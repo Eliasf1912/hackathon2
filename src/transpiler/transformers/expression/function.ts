@@ -95,7 +95,7 @@ export async function transformParameter(parameter: TsAST.ParameterDeclaration, 
  */
 async function transformExpressionBody(
 	body: TsAST.Expression,
-	returnType: GoAST.Type | GoAST.TypeReference,
+	returnType: GoAST.Type | GoAST.TypeReference | undefined,
 	context: BuildContext,
 ) {
 	const expression = await DCommon.asyncPipe(
@@ -105,6 +105,26 @@ async function transformExpressionBody(
 
 	if (DEither.isLeft(expression)) {
 		return expression;
+	}
+
+	// `() => action()` dans une fonction `void` : l'expression est seulement évaluée.
+	if (!returnType) {
+		return DEither.right(
+			"function-body",
+			GoAST.createBlockStatement({
+				statements: DArray.concat(
+					expression.before,
+					[
+						DModeling.hasTagValue(expression.result, "[node][expression][statement]call")
+							? expression.result
+							: GoAST.createAssignmentStatement({
+								targets: DCommon.cast([GoAST.createIdentifier("_")]),
+								values: DCommon.cast([expression.result]),
+							}),
+					],
+				),
+			}),
+		);
 	}
 
 	const value = await convertExpressionToType(
@@ -156,6 +176,7 @@ export const functionExpressionTransformer: Transformer<GoAST.FunctionLiteral> =
 			!TsAST.isArrowFunction(node)
 			&& !TsAST.isFunctionExpression(node)
 			&& !(TsAST.isMethodDeclaration(node) && TsAST.isObjectLiteralExpression(node.parent))
+			&& !(TsAST.isFunctionDeclaration(node) && TsAST.isBlock(node.parent))
 		) {
 			return context.notSupport();
 		}
@@ -202,7 +223,7 @@ export const functionExpressionTransformer: Transformer<GoAST.FunctionLiteral> =
 		return context.success({
 			result: GoAST.createFunctionLiteral({
 				arguments: DArray.map(transformedParameters, ({ argument }) => argument),
-				returnTypes: [DEither.unwrapRight(returnType)],
+				returnTypes: DCommon.pipe(DEither.unwrapRight(returnType), (type) => (type ? [type] : [])),
 				body: GoAST.createBlockStatement({
 					statements: DArray.concat(
 						DArray.flatMap(transformedParameters, ({ bindings }) => bindings),

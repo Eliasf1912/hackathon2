@@ -25,8 +25,13 @@ function findEnclosingFunction(node: TsAST.Node): TsAST.FunctionLikeDeclaration 
  */
 export const returnStatementTransformer: Transformer<GoAST.ReturnStatement> = createTransformer(
 	async(node, context) => {
-		if (!TsAST.isReturnStatement(node) || !node.expression) {
+		if (!TsAST.isReturnStatement(node)) {
 			return context.notSupport();
+		}
+
+		// `return;` (fonction `void`).
+		if (!node.expression) {
+			return context.success({ result: GoAST.createReturnStatement({ values: [] }) });
 		}
 
 		const functionNode = findEnclosingFunction(node);
@@ -39,6 +44,12 @@ export const returnStatementTransformer: Transformer<GoAST.ReturnStatement> = cr
 
 		if (DEither.isLeft(returnType)) {
 			return returnType;
+		}
+
+		const goReturnType = DEither.unwrapRight(returnType);
+
+		if (!goReturnType) {
+			return context.error(node, "un-support-return-value-in-void-function");
 		}
 
 		const expression = await DCommon.asyncPipe(
@@ -54,7 +65,7 @@ export const returnStatementTransformer: Transformer<GoAST.ReturnStatement> = cr
 			{
 				node: node.expression,
 				expression: expression.result,
-				targetType: DEither.unwrapRight(returnType),
+				targetType: goReturnType,
 			},
 			context,
 		);

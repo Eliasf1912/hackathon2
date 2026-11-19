@@ -10,7 +10,7 @@ import { convertToType, goTypeKey, transformCheckerType } from "../type/union";
  * Type Go déclaré d'une variable ou d'un paramètre (celui de sa variable Go), ou
  * `undefined` si l'identifiant désigne autre chose (fonction, import…).
  */
-async function getDeclaredGoType(node: TsAST.Identifier, context: BuildContext) {
+export async function getDeclaredGoType(node: TsAST.Identifier, context: BuildContext) {
 	const { typeChecker } = context.transpilation;
 	const declarationHandle = (await typeChecker.getSymbolAtLocation(node))?.valueDeclaration;
 

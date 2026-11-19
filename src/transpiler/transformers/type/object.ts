@@ -5,7 +5,7 @@ import * as DEither from "@duplojs/lang/either";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
-import { SymbolFlags } from "typescript/async";
+import { NodeBuilderFlags, SymbolFlags } from "typescript/async";
 import { type BuildContext } from "../../context/build";
 import { isSourceNode, resolveTypeDeclaration } from "../../resolvedReference";
 import { typeTransformers } from ".";
@@ -273,9 +273,31 @@ export const declaredTypeTransformer: Transformer<GoType> = createTransformer(
 				return context.error(node, "un-support-generic-type");
 			}
 
-			return TsAST.isTypeAliasDeclaration(declaration)
-				? context.transform(declaration.type, typeTransformers.value)
-				: context.notSupport();
+			if (!TsAST.isTypeAliasDeclaration(declaration)) {
+				return context.notSupport();
+			}
+
+			const aliasChain = resolvingDeclarations.getStore() ?? new Set<TsAST.Node>();
+
+			if (aliasChain.has(declaration)) {
+				return context.error(node, "un-support-recursive-type");
+			}
+
+			// Le type que le checker a calculé pour l'alias (`ReturnType<typeof f>`, union…),
+			// déplié (`InTypeAlias` : sinon il serait réécrit par le nom de l'alias).
+			const { typeChecker } = context.transpilation;
+			const aliasedNode = await typeChecker.typeToTypeNode(
+				await typeChecker.getTypeAtLocation(declaration.name),
+				declaration,
+				NodeBuilderFlags.NoTruncation | NodeBuilderFlags.InTypeAlias,
+			);
+
+			return aliasedNode
+				? resolvingDeclarations.run(
+					new Set([...aliasChain, declaration]),
+					() => context.transform(aliasedNode, typeTransformers.value),
+				)
+				: context.error(node, "un-support-type-alias");
 		}
 
 		const typeArguments = await DCommon.asyncPipe(
@@ -409,5 +431,44 @@ export const typeParameterTransformer: Transformer<GoAST.Identifier> = createTra
 		return !fileSymbol && getFileTypeParameters(context.file.sourceFile).has(name)
 			? context.success({ result: context.createSourceIdentifier(name) })
 			: context.notSupport();
+	},
+);
+
+/**
+ * `Readonly<T>` → `T`, `ReadonlyArray<T>` → `[]T` : l'immutabilité est vérifiée par TS,
+ * elle n'existe pas à l'exécution.
+ */
+export const readonlyUtilityTypeTransformer: Transformer<GoType> = createTransformer(
+	async(node, context) => {
+		if (
+			!TsAST.isTypeReferenceNode(node)
+			|| !TsAST.isIdentifier(node.typeName)
+			|| (node.typeName.text !== "Readonly" && node.typeName.text !== "ReadonlyArray")
+			|| node.typeArguments?.length !== 1
+		) {
+			return context.notSupport();
+		}
+
+		const [argument] = node.typeArguments;
+
+		if (!argument) {
+			return context.notSupport();
+		}
+
+		const type = await DCommon.asyncPipe(
+			context.transform(argument, typeTransformers.value),
+			DEither.unwrapRight,
+		);
+
+		if (DEither.isLeft(type)) {
+			return type;
+		}
+
+		return context.success({
+			before: type.before,
+			result: node.typeName.text === "Readonly"
+				? type.result
+				: GoAST.createSliceType({ elementType: type.result }),
+		});
 	},
 );

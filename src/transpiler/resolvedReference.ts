@@ -249,6 +249,31 @@ export async function resolveReferenceModule(
 	});
 }
 
+async function findProjectTypeDeclaration(name: string, context: BuildContext) {
+	const { program } = context.transpilation;
+	const matches: ResolvedTypeDeclaration[] = [];
+
+	for (const fileName of await program.getSourceFileNames()) {
+		const filePath = DEither.unwrapRight(DPath.createAbsolute(fileName));
+
+		if (DString.includes(fileName, "/node_modules/") || DEither.isLeft(filePath)) {
+			continue;
+		}
+
+		const sourceFile = await program.getSourceFile(fileName);
+		const declaration = sourceFile && findTopLevelTypeDeclaration(sourceFile, name);
+
+		if (declaration) {
+			matches.push({
+				declaration,
+				filePath,
+			});
+		}
+	}
+
+	return DArray.lengthEqual(matches, 1) ? DArray.first(matches) : undefined;
+}
+
 export type ObjectTypeDeclaration = TsAST.InterfaceDeclaration | TsAST.TypeAliasDeclaration;
 
 export interface ResolvedTypeDeclaration {
@@ -342,6 +367,14 @@ export async function resolveTypeDeclaration(
 		? await checker.getSymbolAtLocation(node.typeName)
 		: await checker.resolveName(node.typeName.text, SymbolFlags.Type, context.file.sourceFile);
 	const symbol = found && (found.flags & SymbolFlags.Alias ? await checker.getAliasedSymbol(found) : found);
+
+	// Nom synthétisé hors de portée (le checker écrit `OrderServiceDependencies`, interface
+	// non exportée d'un autre fichier) : la déclaration de ce nom dans le projet, si elle
+	// est unique.
+	if (!symbol && !isSourceNode(node.typeName)) {
+		return findProjectTypeDeclaration(node.typeName.text, context);
+	}
+
 	const handle = symbol && DArray.first(symbol.declarations);
 
 	if (

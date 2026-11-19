@@ -28,6 +28,11 @@ export async function transformFunctionReturnType(
 		NodeBuilderFlags.NoTruncation,
 	) ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword);
 
+	// `void` : une fonction Go sans valeur de retour.
+	if (returnTypeNode.kind === TsAST.SyntaxKind.VoidKeyword) {
+		return DEither.success(undefined);
+	}
+
 	const returnType = await DCommon.asyncPipe(
 		context.transform(returnTypeNode, typeTransformers.value),
 		DEither.unwrapRight,
@@ -89,7 +94,7 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 			result: GoAST.createFunctionDeclaration({
 				identifier: functionIdentifier,
 				arguments: DArray.map(transformedParameters, ({ argument }) => argument),
-				returnTypes: [DEither.unwrapRight(returnType)],
+				returnTypes: DCommon.pipe(DEither.unwrapRight(returnType), (type) => (type ? [type] : [])),
 				// Paramètres déstructurés (`({ a, b }) =>`) : liés au début du corps.
 				body: GoAST.createBlockStatement({
 					statements: DArray.concat(
