@@ -5,6 +5,7 @@ import { createTransformer, type Transformer } from "@transformer";
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
+import * as DGenerator from "@duplojs/lang/generator";
 import { type BuildContext } from "../../context/build";
 import { expressionTransformers } from "../expression";
 import { typeTransformers } from "../type";
@@ -103,15 +104,119 @@ async function transformLocalDestructuring(
 }
 
 /**
- * `const` / `let`.
+ * Une variable `const` / `let`.
  *
  * - Variable de module (enfant direct du fichier) : `var x T` au niveau du package,
  *   pour être visible des fonctions et des autres fichiers. L'affectation de la valeur
  *   part dans les `before`, que `transformSourceFile` place dans `func init()`.
  * - Variable locale : `x := valeur`.
+ */
+export async function transformVariableDeclaration(
+	declaration: TsAST.VariableDeclaration,
+	isModuleVariable: boolean,
+	context: BuildContext,
+) {
+	if (!TsAST.isIdentifier(declaration.name)) {
+		return transformLocalDestructuring(declaration, declaration.name, isModuleVariable, context);
+	}
+
+	const identifier = context.createSourceIdentifier(declaration.name.text);
+
+	if (!declaration.initializer) {
+		if (!isModuleVariable) {
+			return context.error(declaration, "un-support-local-variable-without-initializer");
+		}
+
+		const variableType = await transformVariableType(declaration, context);
+
+		if (DEither.isLeft(variableType)) {
+			return variableType;
+		}
+
+		return context.success({
+			result: GoAST.createVariableDeclarationZeroValue({
+				identifier,
+				typeReference: DEither.unwrapRight(variableType),
+			}),
+		});
+	}
+
+	const initializer = await DCommon.asyncPipe(
+		context.transform(declaration.initializer, expressionTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(initializer)) {
+		return initializer;
+	}
+
+	// Variable locale sans annotation : `:=` prend le type de la valeur, comme TS.
+	if (!isModuleVariable && !declaration.type) {
+		return context.success({
+			before: initializer.before,
+			result: GoAST.createShortVariableDeclarationStatement({
+				identifier,
+				initializer: initializer.result,
+			}),
+		});
+	}
+
+	const variableType = await transformVariableType(declaration, context);
+
+	if (DEither.isLeft(variableType)) {
+		return variableType;
+	}
+
+	// La valeur est convertie vers le type de la variable (un membre dans une union).
+	const value = await convertExpressionToType(
+		{
+			node: declaration.initializer,
+			expression: initializer.result,
+			targetType: DEither.unwrapRight(variableType),
+		},
+		context,
+	);
+
+	if (DEither.isLeft(value)) {
+		return value;
+	}
+
+	if (!isModuleVariable) {
+		return context.success({
+			before: initializer.before,
+			result: GoAST.createShortVariableDeclarationStatement({
+				identifier,
+				initializer: DEither.unwrapRight(value),
+			}),
+		});
+	}
+
+	return context.success({
+		before: DArray.concat(
+			initializer.before,
+			[
+				GoAST.createAssignmentStatement({
+					targets: DCommon.cast([identifier]),
+					values: DCommon.cast([DEither.unwrapRight(value)]),
+				}),
+			],
+		),
+		result: GoAST.createVariableDeclarationZeroValue({
+			identifier,
+			typeReference: DEither.unwrapRight(variableType),
+		}),
+	});
+}
+
+/**
+ * `const` / `let`, une ou plusieurs variables.
  *
- * Limites connues (erreurs explicites) : plusieurs variables dans une même instruction,
- * déstructuration.
+ * Plusieurs variables dans une fonction (`const a = 1, b = a + 1`) : une déclaration Go
+ * par variable, dans l'ordre du source (chacune voit les précédentes, comme en JS).
+ * Au niveau du fichier, `transformSourceFile` traduit chaque variable avec
+ * `transformVariableDeclaration` (une `var` par variable).
+ *
+ * Limite connue (erreur explicite) : déstructuration au niveau du fichier.
  */
 export const variableStatementTransformer: Transformer<
 	GoAST.VariableDeclarationZeroValue | GoAST.ShortVariableDeclarationStatement | GoAST.AssignmentStatement
@@ -121,103 +226,58 @@ export const variableStatementTransformer: Transformer<
 			return context.notSupport();
 		}
 
-		const declaration = DArray.first(node.declarationList.declarations);
+		const declarations = node.declarationList.declarations;
+		const isModuleVariable = TsAST.isSourceFile(node.parent);
+		const declaration = DArray.first(declarations);
 
-		if (!declaration || !DArray.lengthEqual(node.declarationList.declarations, 1)) {
+		if (declaration && DArray.lengthEqual(declarations, 1)) {
+			return transformVariableDeclaration(declaration, isModuleVariable, context);
+		}
+
+		// Garde : au niveau du fichier, une `var` ne peut pas aller dans les `before` (placés
+		// dans `func init()`) ; ce cas est traité en amont par `transformSourceFile`.
+		if (!declaration || isModuleVariable) {
 			return context.error(node, "un-support-multiple-variable-declarations");
 		}
 
-		const isModuleVariable = TsAST.isSourceFile(node.parent);
+		const statements = await DCommon.asyncPipe(
+			declarations,
+			DGenerator.asyncReduce(
+				DGenerator.reduceFrom<readonly GoAST.Statement[]>([]),
+				async({ item, lastValue, next, exit }) => {
+					const transformed = await transformVariableDeclaration(item, isModuleVariable, context);
 
-		if (!TsAST.isIdentifier(declaration.name)) {
-			return transformLocalDestructuring(declaration, declaration.name, isModuleVariable, context);
-		}
+					if (DEither.isLeft(transformed)) {
+						return exit(transformed);
+					}
 
-		const identifier = context.createSourceIdentifier(declaration.name.text);
+					const { before, result } = DEither.unwrapRight(transformed);
 
-		if (!declaration.initializer) {
-			if (!isModuleVariable) {
-				return context.error(declaration, "un-support-local-variable-without-initializer");
-			}
-
-			const variableType = await transformVariableType(declaration, context);
-
-			if (DEither.isLeft(variableType)) {
-				return variableType;
-			}
-
-			return context.success({
-				result: GoAST.createVariableDeclarationZeroValue({
-					identifier,
-					typeReference: DEither.unwrapRight(variableType),
-				}),
-			});
-		}
-
-		const initializer = await DCommon.asyncPipe(
-			context.transform(declaration.initializer, expressionTransformers.value),
-			DEither.unwrapRight,
+					return next(DArray.concat(lastValue, before, [result]));
+				},
+			),
 		);
 
-		if (DEither.isLeft(initializer)) {
-			return initializer;
+		if (DEither.isLeft(statements)) {
+			return statements;
 		}
 
-		// Variable locale sans annotation : `:=` prend le type de la valeur, comme TS.
-		if (!isModuleVariable && !declaration.type) {
-			return context.success({
-				before: initializer.before,
-				result: GoAST.createShortVariableDeclarationStatement({
-					identifier,
-					initializer: initializer.result,
-				}),
-			});
-		}
+		const last = DArray.last(statements);
 
-		const variableType = await transformVariableType(declaration, context);
-
-		if (DEither.isLeft(variableType)) {
-			return variableType;
-		}
-
-		// La valeur est convertie vers le type de la variable (un membre dans une union).
-		const value = await convertExpressionToType(
-			{
-				node: declaration.initializer,
-				expression: initializer.result,
-				targetType: DEither.unwrapRight(variableType),
-			},
-			context,
-		);
-
-		if (DEither.isLeft(value)) {
-			return value;
-		}
-
-		if (!isModuleVariable) {
-			return context.success({
-				before: initializer.before,
-				result: GoAST.createShortVariableDeclarationStatement({
-					identifier,
-					initializer: DEither.unwrapRight(value),
-				}),
-			});
+		// Dernière instruction : `x := …`, ou l'affectation finale d'une déstructuration.
+		if (
+			!last
+			|| (
+				!DModeling.hasTagValue(last, "[node][statement]variable-short")
+				&& !DModeling.hasTagValue(last, "[node][statement]assignment")
+			)
+		) {
+			return context.error(node, "un-support-multiple-variable-declarations");
 		}
 
 		return context.success({
-			before: DArray.concat(
-				initializer.before,
-				[
-					GoAST.createAssignmentStatement({
-						targets: DCommon.cast([identifier]),
-						values: DCommon.cast([DEither.unwrapRight(value)]),
-					}),
-				],
-			),
-			result: GoAST.createVariableDeclarationZeroValue({
-				identifier,
-				typeReference: DEither.unwrapRight(variableType),
-			}),
+			before: DArray.slice(statements, 0, -1),
+			result: last,
 		});
 	},
 );

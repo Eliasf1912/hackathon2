@@ -12,10 +12,35 @@ import type { TranspilationContext } from "./context/transpilation";
 import { sourceFileTransformers } from "./transformers";
 import { createFile } from "./createFile";
 import { createSourcePackageLayout } from "./sourcePackage";
+import { transformVariableDeclaration } from "./transformers/statement/variable";
+import { type TransformationSuccessPayload } from "@transformer";
 
 interface TransformedFileContent {
 	declarations: GoAST.GoFile["declarations"];
 	init: readonly GoAST.Statement[];
+}
+
+/**
+ * Range une instruction traduite du fichier : une déclaration au niveau du package, le
+ * reste (et les `before`) dans `func init()`, dans l'ordre du source.
+ */
+function appendTransformed(
+	content: TransformedFileContent,
+	transformed: TransformationSuccessPayload<GoAST.GoFile["declarations"][number] | GoAST.Statement>,
+): TransformedFileContent {
+	const init = DArray.concat(content.init, transformed.before);
+
+	if (DModeling.hasTagGroup(transformed.result, "declaration")) {
+		return {
+			declarations: DArray.push(content.declarations, transformed.result),
+			init,
+		};
+	}
+
+	return {
+		declarations: content.declarations,
+		init: DArray.push(init, transformed.result),
+	};
 }
 
 /**
@@ -130,6 +155,35 @@ export async function transformSourceFile(
 					return next(lastValue);
 				}
 
+				// `const a = 1, b = 2` au niveau du fichier : une déclaration `var` par variable
+				// (une `var` ne peut pas aller dans `func init()`), affectations dans l'ordre.
+				if (
+					TsAST.isVariableStatement(item)
+					&& !DArray.lengthEqual(item.declarationList.declarations, 1)
+				) {
+					const variables = await DCommon.asyncPipe(
+						item.declarationList.declarations,
+						DGenerator.asyncReduce(
+							DGenerator.reduceFrom<TransformedFileContent>(lastValue),
+							async(variable) => {
+								const transformed = await transformVariableDeclaration(variable.item, true, context);
+
+								if (DEither.isLeft(transformed)) {
+									return variable.exit(transformed);
+								}
+
+								return variable.next(
+									appendTransformed(variable.lastValue, DEither.unwrapRight(transformed)),
+								);
+							},
+						),
+					);
+
+					return DEither.isLeft(variables)
+						? exit(variables)
+						: next(variables);
+				}
+
 				const statement = await DCommon.asyncPipe(
 					context.transform(item, sourceFileTransformers.value),
 					DEither.keepAsRightByInformation("transformation-success"),
@@ -140,20 +194,7 @@ export async function transformSourceFile(
 					return exit(statement);
 				}
 
-				const result = statement.result;
-				const init = DArray.concat(lastValue.init, statement.before);
-
-				if (DModeling.hasTagGroup(result, "declaration")) {
-					return next({
-						declarations: DArray.push(lastValue.declarations, result),
-						init,
-					});
-				}
-
-				return next({
-					declarations: lastValue.declarations,
-					init: DArray.push(init, result),
-				});
+				return next(appendTransformed(lastValue, statement));
 			},
 		),
 	);

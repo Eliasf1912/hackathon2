@@ -83,7 +83,7 @@ Le code contient **78 erreurs nommées** (`un-support-…`) : ce qui est reconnu
 |---|---|
 | `un-support-heterogeneous-or-empty-tuple` | `[number, string]` (prévu : struct `TupleN` avec JSON en tableau) |
 | `un-support-type-conversion` | conversion entre types sans variante commune ; tuple `[N]T` vers tableau `T[]` |
-| `un-support-variable-destructuring`, `un-support-multiple-variable-declarations` | `const [a, b] = x`, `const a = 1, b = 2` |
+| `un-support-variable-destructuring` | `const [a, b] = x` au niveau du fichier (`const a = 1, b = 2` est traduit, dans une fonction comme au niveau du fichier) |
 | `un-support-non-boolean-condition` | « truthiness » JS : `if (valeur)` sur un nombre, une chaîne… |
 | `un-support-map-index-params` | `map((element, { index }) => …)` : demande les objets |
 | `un-support-group-object` | `group({ a, b })` : demande les objets |
