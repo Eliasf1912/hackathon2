@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -13,7 +14,11 @@ interface TestCase {
 	description: string;
 	code: string;
 	category: string;
+	// Ajouté après `code` pour la comparaison des sorties Go / TS : appelle et affiche.
+	call?: string;
 }
+
+const printImport = "import * as DCommon from \"@duplojs/lang/common\";\n";
 
 const testCases: TestCase[] = [
 	{
@@ -25,6 +30,7 @@ export function test(a: string, b: boolean): string {
 	return a;
 }
 `,
+		call: printImport + "DCommon.print(test(\"hello\", true));\n",
 	},
 	{
 		name: "02_boolean_literals_and_logical_ops",
@@ -37,6 +43,7 @@ export function test(): boolean {
 	return a && b;
 }
 `,
+		call: printImport + "DCommon.print(test());\n",
 	},
 	{
 		name: "03_for_of_loop",
@@ -50,6 +57,7 @@ export function test(items: number[]): void {
 	}
 }
 `,
+		call: "test([1, 2, 3]);\n",
 	},
 	{
 		name: "04_switch_statement",
@@ -65,6 +73,7 @@ export function test(x: number): number {
 	}
 }
 `,
+		call: printImport + "DCommon.print(test(1));\nDCommon.print(test(5));\n",
 	},
 	{
 		name: "05_deeply_nested_pipe",
@@ -80,6 +89,7 @@ export const result = DCommon.pipe(
 	(x: number) => x + 10,
 );
 `,
+		call: "DCommon.print(result);\n",
 	},
 	{
 		name: "06_property_access_on_object",
@@ -89,6 +99,7 @@ export const result = DCommon.pipe(
 export const user = { name: "Alice", age: 30 };
 export const name = user.name;
 `,
+		call: printImport + "DCommon.print(name);\nDCommon.print(user);\n",
 	},
 	{
 		name: "07_object_destructuring",
@@ -100,6 +111,7 @@ export function test() {
 	return a + b;
 }
 `,
+		call: printImport + "DCommon.print(test());\n",
 	},
 	{
 		name: "08_template_literal",
@@ -110,6 +122,7 @@ export function test(name: string) {
 	return \`Hello \${name}\`;
 }
 `,
+		call: printImport + "DCommon.print(test(\"Bob\"));\n",
 	},
 	{
 		name: "09_typeof_operator",
@@ -136,6 +149,7 @@ export function test(x: number): number {
 	}
 }
 `,
+		call: printImport + "DCommon.print(test(5));\nDCommon.print(test(-5));\nDCommon.print(test(0));\n",
 	},
 	{
 		name: "11_darray_coalescing",
@@ -193,6 +207,7 @@ export function test(a: number, b: number) {
 	return a > 0 ? (b > 0 ? 1 : 2) : 3;
 }
 `,
+		call: printImport + "DCommon.print(test(1, 1));\nDCommon.print(test(1, -1));\nDCommon.print(test(-1, 0));\n",
 	},
 	{
 		name: "16_destructuring_tuple_in_pipe",
@@ -213,6 +228,7 @@ export const res = DCommon.pipe(
 		code: `
 export const empty = [];
 `,
+		call: printImport + "DCommon.print(empty);\n",
 	},
 	{
 		name: "18_object_method_declaration",
@@ -225,6 +241,7 @@ export const calc = {
 	},
 };
 `,
+		call: printImport + "DCommon.print(calc.add(2, 3));\n",
 	},
 	{
 		name: "19_deither_match_information_complex",
@@ -251,6 +268,7 @@ export const res = DCommon.pipe(
 	DArray.map(([a, b]) => a + b),
 );
 `,
+		call: "DCommon.print(res);\n",
 	},
 ];
 
@@ -283,6 +301,7 @@ async function runTests() {
 		status: "PASS" | "FAIL";
 		details?: string;
 		reason?: string;
+		output?: string;
 	}[] = [];
 
 	for (const testCase of testCases) {
@@ -379,6 +398,46 @@ async function runTests() {
 		}
 	}
 
+	// Cas acceptés : le programme (code + appel) est traduit, compilé et exécuté en Go, puis
+	// sa sortie est comparée à celle de TypeScript par le banc .commands/test-outputs.sh.
+	const passedCases = testCases.filter(
+		(testCase) => results.some((r) => r.name === testCase.name && r.status === "PASS"),
+	);
+
+	for (const testCase of passedCases) {
+		await fs.writeFile(
+			path.join(BASE_TEST_DIR, testCase.name, "index.ts"),
+			testCase.code + (testCase.call ?? ""),
+		);
+	}
+
+	if (passedCases.length > 0) {
+		const bench = spawnSync(
+			"bash",
+			[
+				path.join(process.cwd(), ".commands", "test-outputs.sh"),
+				...passedCases.map((testCase) => path.join(BASE_TEST_DIR, testCase.name)),
+			],
+			{
+				encoding: "utf8",
+				// Sans le tsconfig du transpileur que tsx transmet aux processus enfants :
+				// chaque cas s'exécute avec son propre tsconfig.json.
+				env: Object.fromEntries(
+					Object.entries(process.env).filter(([key]) => key !== "TSX_TSCONFIG_PATH"),
+				),
+			},
+		);
+
+		for (const line of bench.stdout.split("\n")) {
+			const match = /^(IDENTIQUE|DIFFÉRENT|GO KO|TRADUCTION KO)\s+cas (\S+)$/.exec(line);
+			const result = match && results.find((r) => r.name === match[2]);
+
+			if (match && result) {
+				result.output = match[1];
+			}
+		}
+	}
+
 	await fs.rm(BASE_TEST_DIR, { recursive: true, force: true });
 
 	console.log("\n==================== RÉSULTATS DU STRESS TEST ====================\n");
@@ -386,6 +445,9 @@ async function runTests() {
 		const tag = r.status === "PASS" ? "✅ PASS" : "❌ FAIL";
 		console.log(`${tag} [${r.category}] ${r.name}`);
 		console.log(`     Desc: ${r.description}`);
+		if (r.status === "PASS") {
+			console.log(`     Go : ${r.output ?? "non comparé"}`);
+		}
 		if (r.status === "FAIL") {
 			console.log(`     Raison: ${r.reason}`);
 			if (r.details) {
@@ -397,8 +459,9 @@ async function runTests() {
 
 	const passCount = results.filter((r) => r.status === "PASS").length;
 	const failCount = results.filter((r) => r.status === "FAIL").length;
-	console.log(`TOTAL: ${results.length} tests | ${passCount} Réussis (compilation TS->Go validée) | ${failCount} Échecs`);
-	console.log(`Note: PASS valide l'acceptation par le transpileur, sans présumer de l'exécution sémantique Go.\n`);
+	const identicalCount = results.filter((r) => r.output === "IDENTIQUE").length;
+	console.log(`TOTAL: ${results.length} tests | ${passCount} Réussis (compilation TS->Go validée) | ${failCount} Échecs | Go identique à TS : ${identicalCount}/${passCount}`);
+	console.log(`Note: PASS valide l'acceptation par le transpileur ; « Go identique à TS » compare en plus la sortie du Go compilé et exécuté à celle de TypeScript.\n`);
 }
 
 runTests().catch(console.error);
