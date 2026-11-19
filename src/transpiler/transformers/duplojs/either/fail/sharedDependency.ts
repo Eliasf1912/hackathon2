@@ -1,7 +1,7 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
-import { declareEitherVariant, informationFieldIdentifier } from "../sharedDependency";
+import { declareEitherVariant, informationFieldIdentifier, valueFieldIdentifier } from "../sharedDependency";
 
 export const failTypeIdentifier = GoAST.createIdentifier("EitherFail");
 export const failFunctionIdentifier = GoAST.createIdentifier("EitherFailOf");
@@ -12,18 +12,15 @@ declareEitherVariant(failTypeIdentifier, {
 	hasValue: false,
 });
 
-/**
- * `DEither.Fail`. Forme JSON DuploJS (vérifiée avec `JSON.stringify(DEither.fail())`) :
- * `{ left: null, information: "fail", fail: null }`, sans `value`.
- */
-export const eitherFailDependency = DCommon.memo(() => {
-	const nullType = GoAST.createIdentifier("JSNull");
-	const nullLiteral = GoAST.createStructLiteral({
-		typeReference: nullType,
-		elements: [],
-	});
+const nullType = GoAST.createIdentifier("JSNull");
 
-	return createSharedDependency({
+/**
+ * Type `DEither.Fail`. Forme JSON DuploJS (vérifiée avec `JSON.stringify(DEither.fail())`) :
+ * `{ left: null, information: "fail", fail: null }`. Émis seul quand le type est seulement
+ * mentionné (une union de retour, par exemple), sans le constructeur.
+ */
+export const eitherFailTypeDependency = DCommon.memo(
+	() => createSharedDependency({
 		imports: [],
 		init: [],
 		declarations: [
@@ -41,6 +38,13 @@ export const eitherFailDependency = DCommon.memo(() => {
 							typeReference: GoAST.builtinTypeReferences.string,
 							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/information\"",
 						}),
+						// `fail()` garde la clé `value` à `undefined` (affichée par Node) :
+						// `JSUndefined` + `omitzero` l'omet du JSON, comme `JSON.stringify`.
+						GoAST.createStructField({
+							identifier: valueFieldIdentifier,
+							typeReference: GoAST.createIdentifier("JSUndefined"),
+							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/value,omitzero\"",
+						}),
 						GoAST.createStructField({
 							identifier: GoAST.createIdentifier("Fail"),
 							typeReference: nullType,
@@ -49,6 +53,24 @@ export const eitherFailDependency = DCommon.memo(() => {
 					],
 				}),
 			}),
+		],
+	}),
+);
+
+/**
+ * `EitherFailOf()`, le constructeur de `DEither.fail()`, émis seulement quand un échec
+ * est créé. Nécessite la dépendance du type `EitherFail`.
+ */
+export const eitherFailDependency = DCommon.memo(() => {
+	const nullLiteral = GoAST.createStructLiteral({
+		typeReference: nullType,
+		elements: [],
+	});
+
+	return createSharedDependency({
+		imports: [],
+		init: [],
+		declarations: [
 			GoAST.createFunctionDeclaration({
 				identifier: failFunctionIdentifier,
 				generic: [],

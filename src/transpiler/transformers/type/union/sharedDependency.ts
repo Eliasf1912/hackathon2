@@ -5,6 +5,8 @@ import { createSharedDependency, type SharedDependency } from "@transformer";
 
 export const unionTagFieldIdentifier = GoAST.createIdentifier("Tag");
 
+export const unionActiveVariantIdentifier = GoAST.createIdentifier("ActiveVariant");
+
 export function unionTypeIdentifier(arity: number) {
 	return GoAST.createIdentifier(`Union${arity}`);
 }
@@ -53,6 +55,15 @@ export function unionDependency(members: readonly unknown[] & DArray.MinElements
 	const unionTypeReference = GoAST.createGenericTypeReference({
 		typeReference: unionTypeIdentifier(arity),
 		typeArguments: DCommon.cast(generics),
+	});
+
+	const returnVariant = (index: number) => GoAST.createReturnStatement({
+		values: [
+			GoAST.createSelectorExpression({
+				target: receiver,
+				identifier: unionValueFieldIdentifier(index),
+			}),
+		],
 	});
 
 	const marshalVariant = (index: number) => GoAST.createReturnStatement({
@@ -127,6 +138,33 @@ export function unionDependency(members: readonly unknown[] & DArray.MinElements
 							}),
 						),
 						marshalVariant(arity - 1),
+					],
+				}),
+			}),
+			// Variante active, pour `print` qui affiche la valeur elle-même comme `MarshalJSON`.
+			GoAST.createMethodDeclaration({
+				identifier: unionActiveVariantIdentifier,
+				receiver: [receiver, unionTypeReference],
+				generic: [],
+				arguments: [],
+				returnTypes: [GoAST.builtinTypeReferences.any],
+				body: GoAST.createBlockStatement({
+					statements: [
+						...DArray.map(
+							DArray.slice(indexes, 0, -1),
+							(index) => GoAST.createIfStatement({
+								condition: GoAST.createBinaryExpression({
+									operator: "==",
+									left: GoAST.createSelectorExpression({
+										target: receiver,
+										identifier: unionTagFieldIdentifier,
+									}),
+									right: GoAST.createIntegerLiteral({ value: BigInt(index) }),
+								}),
+								body: GoAST.createBlockStatement({ statements: [returnVariant(index)] }),
+							}),
+						),
+						returnVariant(arity - 1),
 					],
 				}),
 			}),
