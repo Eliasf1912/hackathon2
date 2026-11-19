@@ -5,7 +5,3 @@ export function formatPrice(amount: number) {
 
 	return `${DString.to(rounded)} €`;
 }
-
-export function formatCustomer(customer: string) {
-	return DString.padStart(DString.toUpperCase(customer), 8, ".");
-}

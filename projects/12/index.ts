@@ -1,95 +1,128 @@
-import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
-import * as DEither from "@duplojs/lang/either";
-import * as DString from "@duplojs/lang/string";
-import {
-	applyDiscount,
-	catalog,
-	computeSubtotal,
-	formatCustomer,
-	formatPrice,
-	priceLine,
-	type Order,
-} from "./domain";
+import { createOrderController } from "./controllers/orderController";
+import { createProductController } from "./controllers/productController";
+import { createCustomerRepository } from "./repositories/customerRepository";
+import { createOrderRepository } from "./repositories/orderRepository";
+import { createProductRepository } from "./repositories/productRepository";
+import { createRouter, type Request } from "./router";
+import { createOrderService } from "./services/orderService";
 
-const storedOrders: readonly Order[] = [
+// Composition : chaque couche reçoit ses dépendances.
+const productRepository = createProductRepository([
 	{
-		customer: "alice",
-		lines: [
-			{
-				productId: "kbd",
-				quantity: 2,
-			},
-			{
-				productId: "scr",
-				quantity: 1,
-			},
-		],
-		discountCode: "WELCOME10",
+		id: "kbd",
+		name: "Clavier",
+		price: 49.9,
+		stock: 3,
 	},
 	{
-		customer: "bob",
-		lines: [
-			{
-				productId: "mse",
-				quantity: 1,
-			},
-		],
+		id: "mse",
+		name: "Souris",
+		price: 19.5,
+		stock: 0,
 	},
 	{
-		customer: "carla",
-		lines: [
-			{
-				productId: "kbd",
-				quantity: 1,
-			},
-			{
-				productId: "cam",
-				quantity: 1,
-			},
-		],
+		id: "scr",
+		name: "Écran 27\"",
+		price: 249,
+		stock: 2,
 	},
+]);
+
+const customerRepository = createCustomerRepository([
+	{
+		id: "alice",
+		name: "Alice",
+		vip: false,
+	},
+	{
+		id: "bob",
+		name: "Bob",
+		vip: true,
+	},
+]);
+
+const orderService = createOrderService({
+	products: productRepository,
+	customers: customerRepository,
+	orders: createOrderRepository(),
+});
+
+const handle = createRouter({
+	products: createProductController(productRepository),
+	orders: createOrderController(orderService),
+});
+
+// Scénario : une suite de requêtes, comme un client HTTP les enverrait.
+const requests: readonly Request[] = [
+	{ route: "list-products" },
+	{
+		route: "place-order",
+		body: {
+			customerId: "alice",
+			lines: [
+				{
+					productId: "kbd",
+					quantity: 2,
+				},
+				{
+					productId: "scr",
+					quantity: 1,
+				},
+			],
+			discountCode: "WELCOME10",
+		},
+	},
+	{
+		route: "place-order",
+		body: {
+			customerId: "bob",
+			lines: [
+				{
+					productId: "kbd",
+					quantity: 2,
+				},
+			],
+		},
+	},
+	{
+		route: "place-order",
+		body: {
+			customerId: "bob",
+			lines: [
+				{
+					productId: "scr",
+					quantity: 1,
+				},
+			],
+		},
+	},
+	{
+		route: "place-order",
+		body: {
+			customerId: "carla",
+			lines: [
+				{
+					productId: "kbd",
+					quantity: 1,
+				},
+			],
+		},
+	},
+	{
+		route: "place-order",
+		body: {
+			customerId: "alice",
+			lines: [],
+		},
+	},
+	{
+		route: "customer-orders",
+		customerId: "bob",
+	},
+	{ route: "list-products" },
 ];
 
-// Simule un chargement asynchrone (base de données, API…).
-async function loadOrders() {
-	const loaded = await Promise.resolve(storedOrders);
-
-	return loaded;
+for (const request of requests) {
+	DCommon.print(await handle(request));
 }
-
-function processOrder({ customer, lines, discountCode }: Order) {
-	const pricedLines = DEither.group(DArray.map(lines, priceLine));
-
-	return DEither.whenIsRightOtherwise(
-		pricedLines,
-		(validLines) => {
-			const subtotal = computeSubtotal(validLines);
-
-			return {
-				customer: formatCustomer(customer),
-				items: DArray.map(validLines, ({ product, quantity }) => `${DString.to(quantity)} x ${product.name}`),
-				subtotal: formatPrice(subtotal),
-				total: formatPrice(applyDiscount(subtotal, discountCode)),
-			};
-		},
-		(failure) => ({
-			customer: formatCustomer(customer),
-			error: DEither.matchInformation(failure, {
-				"product-not-found": (productId) => `produit inconnu : ${productId}`,
-				"out-of-stock": ({ productId, requested, available }) => `stock insuffisant pour ${productId} (${DString.to(requested)} demandés, ${DString.to(available)} disponibles)`,
-			}),
-		}),
-	);
-}
-
-const orders = await loadOrders();
-const results = DArray.map(orders, processOrder);
-
-DCommon.print(results);
-
-const inStock = DArray.filter(catalog, (product) => product.stock > 0);
-const hasHdmi = DArray.some(catalog, (product) => DArray.some(product.tags, (tag) => tag === "hdmi"));
-
-DCommon.print(DArray.map(inStock, (product) => product.name));
-DCommon.print(hasHdmi);
