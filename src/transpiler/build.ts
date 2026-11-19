@@ -12,6 +12,8 @@ import { createFile, type CreateFileParams } from "./createFile";
 import { sharedDependencyPackageName } from "@transformer";
 import { createSourcePackageLayout, goModuleContent } from "./sourcePackage";
 import { defaultSharedDependencies } from "./sharedDependency/defaults";
+import { resetAliases } from "./transformers/type/alias";
+import { resetImportedModules } from "./resolvedReference";
 
 export function build(
 	typescriptInstance: DInvocation.GetEvidenceResult<
@@ -20,8 +22,12 @@ export function build(
 	>,
 	input: string & DPath.Absolute,
 ) {
+	resetAliases();
+	resetImportedModules();
+
 	const context = createTranspilationContext({
 		typeChecker: typescriptInstance.project.checker,
+		program: typescriptInstance.project.program,
 		projectWorkDirectory: typescriptInstance.projectWorkDirectory,
 	});
 
@@ -80,10 +86,11 @@ export function build(
 				}
 
 				const file = DCommon.pipe(
-					DGenerator.concat(
+					// Un `Set` : une dépendance par défaut (`JSNull`) peut aussi être enregistrée.
+					new Set(DGenerator.concat(
 						defaultSharedDependencies.value,
 						context.sharedDependencies,
-					),
+					)),
 					DGenerator.reduce(
 						DGenerator.reduceFrom<CreateFileParams>({
 							packageName: sharedDependencyPackageName,
@@ -94,7 +101,18 @@ export function build(
 						({ item, lastValue, nextWithObject }) => nextWithObject(
 							lastValue,
 							{
-								imports: DArray.concat(lastValue.imports, item.imports),
+								// Deux dépendances peuvent importer le même paquet (`encoding/json`) :
+								// Go refuse le doublon.
+								imports: DArray.concat(
+									lastValue.imports,
+									DArray.filter(
+										item.imports,
+										({ path }) => !DArray.some(
+											lastValue.imports,
+											(imported) => imported.path === path,
+										),
+									),
+								),
 								declarations: DArray.concat(
 									lastValue.declarations,
 									item.declarations,
