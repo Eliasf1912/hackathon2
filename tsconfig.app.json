@@ -9,5 +9,5 @@
 			"@transpiler": ["./src/transpiler/index.ts"],
 		}
 	},
-	"include": ["./src/**/*.ts", "./bin/**/*.ts", "./tests/**/*.ts", "./test_stress.ts"]
+	"include": ["./src/**/*.ts", "./bin/**/*.ts", "./test_stress.ts"]
 }
