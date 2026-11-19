@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as DEither from "@duplojs/lang/either";
 import * as DCommon from "@duplojs/lang/common";
@@ -253,11 +254,22 @@ export const res = DCommon.pipe(
 	},
 ];
 
-const BASE_TEST_DIR = path.resolve(process.cwd(), ".stress_tests_temp");
+const BASE_TEST_DIR = path.resolve(os.tmpdir(), "duplojs_stress_tests_temp");
 
 async function runTests() {
 	await fs.rm(BASE_TEST_DIR, { recursive: true, force: true });
 	await fs.mkdir(BASE_TEST_DIR, { recursive: true });
+
+	// Symlink node_modules into tmpdir so module resolution matches the project environment
+	try {
+		await fs.symlink(
+			path.join(process.cwd(), "node_modules"),
+			path.join(BASE_TEST_DIR, "node_modules"),
+			"dir",
+		);
+	} catch {
+		// Ignore if already exists
+	}
 
 	const tsconfigContent = JSON.stringify({
 		extends: "@duplojs/code-config/tsconfig/base.json",
@@ -385,7 +397,8 @@ async function runTests() {
 
 	const passCount = results.filter((r) => r.status === "PASS").length;
 	const failCount = results.filter((r) => r.status === "FAIL").length;
-	console.log(`TOTAL: ${results.length} tests | ${passCount} Réussis | ${failCount} Échecs\n`);
+	console.log(`TOTAL: ${results.length} tests | ${passCount} Réussis (compilation TS->Go validée) | ${failCount} Échecs`);
+	console.log(`Note: PASS valide l'acceptation par le transpileur, sans présumer de l'exécution sémantique Go.\n`);
 }
 
 runTests().catch(console.error);
