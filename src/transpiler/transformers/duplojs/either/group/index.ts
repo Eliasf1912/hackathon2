@@ -7,10 +7,9 @@ import * as DEither from "@duplojs/lang/either";
 import { SignatureKind } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { registerEitherRuntime } from "../isRight";
 import { createKindPredicate, createValueGetter, resolveEitherMembers, resolveMembersValueType } from "../members";
 import { eitherSuccessDependency } from "../success/sharedDependency";
-import { transformCheckerType } from "../whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 import { eitherGroupDependency, eitherGroupOfGettersDependency, groupFunctionIdentifier, groupOfGettersFunctionIdentifier } from "./sharedDependency";
 
 export async function groupExpressionHandler(
@@ -52,7 +51,7 @@ export async function groupExpressionHandler(
 		? await typeChecker.getReturnTypeOfSignature(getterSignature)
 		: itemType;
 
-	const elementGoType = await transformCheckerType(resultType, call, context);
+	const elementGoType = await useGoType(resultType, call, context);
 
 	if (DEither.isLeft(elementGoType)) {
 		return elementGoType;
@@ -65,7 +64,6 @@ export async function groupExpressionHandler(
 	}
 
 	const valueType = resolveMembersValueType(members, "right");
-	const runtimePackage = registerEitherRuntime(context);
 	context.registerSharedDependency(eitherSuccessDependency.value);
 	const packageName = context.registerSharedDependency(
 		getterSignature
@@ -74,7 +72,6 @@ export async function groupExpressionHandler(
 	);
 
 	return context.success({
-		before: elementGoType.before,
 		result: GoAST.createCallExpression({
 			callee: GoAST.createInstantiationExpression({
 				target: GoAST.createSelectorExpression({
@@ -83,10 +80,10 @@ export async function groupExpressionHandler(
 						? groupOfGettersFunctionIdentifier
 						: groupFunctionIdentifier,
 				}),
-				typeArguments: DCommon.cast([elementGoType.result, valueType]),
+				typeArguments: DCommon.cast([elementGoType, valueType]),
 			}),
 			arguments: [
-				createKindPredicate(members, "right", runtimePackage),
+				createKindPredicate(members, "right", context),
 				createValueGetter(members, valueType, context),
 			],
 		}),

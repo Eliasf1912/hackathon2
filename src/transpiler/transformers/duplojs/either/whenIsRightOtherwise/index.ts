@@ -7,9 +7,8 @@ import * as DEither from "@duplojs/lang/either";
 import { SignatureKind, type Signature } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { registerEitherRuntime } from "../isRight";
 import { createKindPredicate, createValueGetter, resolveEitherMembers, resolveInputType } from "../members";
-import { transformCheckerType } from "../whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 import { eitherWhenIsRightOtherwiseDependency, eitherWhenIsRightOtherwiseWithDependency, whenIsRightOtherwiseFunctionIdentifier, whenIsRightOtherwiseWithFunctionIdentifier } from "./sharedDependency";
 
 export async function whenIsRightOtherwiseExpressionHandler(
@@ -55,7 +54,7 @@ export async function whenIsRightOtherwiseExpressionHandler(
 		return context.error(call, "unresolved-when-is-right-otherwise-callbacks");
 	}
 
-	const valueType = await transformCheckerType(
+	const valueType = await useGoType(
 		await typeChecker.getParameterType(theFunctionSignature, 0),
 		call,
 		context,
@@ -65,7 +64,7 @@ export async function whenIsRightOtherwiseExpressionHandler(
 		return valueType;
 	}
 
-	const otherwiseType = await transformCheckerType(
+	const otherwiseType = await useGoType(
 		await typeChecker.getParameterType(otherwiseSignature, 0),
 		call,
 		context,
@@ -75,7 +74,7 @@ export async function whenIsRightOtherwiseExpressionHandler(
 		return otherwiseType;
 	}
 
-	const theFunctionOutputType = await transformCheckerType(
+	const theFunctionOutputType = await useGoType(
 		await typeChecker.getReturnTypeOfSignature(theFunctionSignature),
 		call,
 		context,
@@ -85,7 +84,7 @@ export async function whenIsRightOtherwiseExpressionHandler(
 		return theFunctionOutputType;
 	}
 
-	const otherwiseOutputType = await transformCheckerType(
+	const otherwiseOutputType = await useGoType(
 		await typeChecker.getReturnTypeOfSignature(otherwiseSignature),
 		call,
 		context,
@@ -98,8 +97,8 @@ export async function whenIsRightOtherwiseExpressionHandler(
 	// Go functions have a single result type: both branches must agree on it.
 	if (
 		!DCommon.equal(
-			GoPrinter.renderNode(theFunctionOutputType.result),
-			GoPrinter.renderNode(otherwiseOutputType.result),
+			GoPrinter.renderNode(theFunctionOutputType),
+			GoPrinter.renderNode(otherwiseOutputType),
 		)
 	) {
 		return context.error(call, "when-is-right-otherwise-outputs-differ");
@@ -117,7 +116,6 @@ export async function whenIsRightOtherwiseExpressionHandler(
 		return members;
 	}
 
-	const runtimePackage = registerEitherRuntime(context);
 	const packageName = context.registerSharedDependency(eitherWhenIsRightOtherwiseDependency.value);
 
 	if (isCurried) {
@@ -125,11 +123,6 @@ export async function whenIsRightOtherwiseExpressionHandler(
 	}
 
 	return context.success({
-		before: DArray.concat(
-			valueType.before,
-			otherwiseType.before,
-			theFunctionOutputType.before,
-		),
 		result: GoAST.createCallExpression({
 			callee: GoAST.createInstantiationExpression({
 				target: GoAST.createSelectorExpression({
@@ -139,14 +132,14 @@ export async function whenIsRightOtherwiseExpressionHandler(
 						: whenIsRightOtherwiseFunctionIdentifier,
 				}),
 				typeArguments: DCommon.cast([
-					valueType.result,
-					otherwiseType.result,
-					theFunctionOutputType.result,
+					valueType,
+					otherwiseType,
+					theFunctionOutputType,
 				]),
 			}),
 			arguments: [
-				createKindPredicate(members, "right", runtimePackage),
-				createValueGetter(members, valueType.result, context),
+				createKindPredicate(members, "right", context),
+				createValueGetter(members, valueType, context),
 			],
 		}),
 	});

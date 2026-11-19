@@ -1,5 +1,5 @@
 import { TsAST } from "@typescript";
-import { NodeBuilderFlags } from "typescript/async";
+import { useGoType } from "../../resolveGoType";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import * as DCommon from "@duplojs/lang/common";
@@ -66,23 +66,30 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 
 		const signature = await context.transpilation.typeChecker.getSignatureFromDeclaration(node);
 
-		const returnTypeNode = node.type ?? await context.transpilation.typeChecker.typeToTypeNode(
-			await context.transpilation.typeChecker.getReturnTypeOfSignature(signature),
-			node,
-			NodeBuilderFlags.NoTruncation,
-		) ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword);
-
-		const returnType = await DCommon.asyncPipe(
-			context.transform(returnTypeNode, typeTransformers.value),
+		// A return type written in the source is a type node; an inferred one comes from the checker.
+		const annotatedReturnType = node.type && await DCommon.asyncPipe(
+			context.transform(node.type, typeTransformers.value),
 			DEither.unwrapRight,
 		);
 
-		if (DEither.isLeft(returnType)) {
-			return returnType;
+		if (annotatedReturnType && DEither.isLeft(annotatedReturnType)) {
+			return annotatedReturnType;
 		}
 
-		if (!DArray.lengthEqual(returnType.before, 0)) {
-			return context.error(returnTypeNode, "un-support-before-on-return-type");
+		if (annotatedReturnType && !DArray.lengthEqual(annotatedReturnType.before, 0)) {
+			return context.error(node, "un-support-before-on-return-type");
+		}
+
+		const returnType = annotatedReturnType
+			? annotatedReturnType.result
+			: await useGoType(
+				await context.transpilation.typeChecker.getReturnTypeOfSignature(signature),
+				node,
+				context,
+			);
+
+		if (DEither.isLeft(returnType)) {
+			return returnType;
 		}
 
 		const body = await DCommon.asyncPipe(
@@ -95,14 +102,14 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 		}
 
 		if (!DArray.lengthEqual(body.before, 0)) {
-			return context.error(returnTypeNode, "un-support-before-on-block-statement");
+			return context.error(node, "un-support-before-on-block-statement");
 		}
 
 		return context.success({
 			result: GoAST.createFunctionDeclaration({
 				identifier: functionIdentifier,
 				arguments: functionArguments,
-				returnTypes: [returnType.result],
+				returnTypes: [returnType],
 				body: body.result,
 				generic: [],
 			}),

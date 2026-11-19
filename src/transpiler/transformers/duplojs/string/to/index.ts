@@ -6,7 +6,7 @@ import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
 import { resolveValueType } from "../../array/coalescing";
-import { transformCheckerType } from "../../either/whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 import { stringToDependency, toFunctionIdentifier } from "./sharedDependency";
 
 export async function toExpressionHandler(
@@ -27,7 +27,7 @@ export async function toExpressionHandler(
 		return context.notSupport();
 	}
 
-	const typeArgument = await transformCheckerType(valueType, node, context);
+	const typeArgument = await useGoType(valueType, node, context);
 
 	if (DEither.isLeft(typeArgument)) {
 		return typeArgument;
@@ -36,13 +36,12 @@ export async function toExpressionHandler(
 	const packageName = context.registerSharedDependency(stringToDependency.value);
 
 	return context.success({
-		before: typeArgument.before,
 		result: GoAST.createInstantiationExpression({
 			target: GoAST.createSelectorExpression({
 				target: packageName,
 				identifier: toFunctionIdentifier,
 			}),
-			typeArguments: DCommon.cast([typeArgument.result]),
+			typeArguments: DCommon.cast([typeArgument]),
 		}),
 	});
 }

@@ -4,10 +4,10 @@ import { TsAST } from "@typescript";
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
-import { NodeBuilderFlags, SignatureKind } from "typescript/async";
+import { SignatureKind } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { typeTransformers } from "../../../type";
+import { useGoType } from "../../../../resolveGoType";
 import { arrayCoalescingDependency, coalescingFunctionIdentifier } from "./sharedDependency";
 
 /**
@@ -58,16 +58,7 @@ export async function coalescingExpressionHandler(
 		return context.notSupport();
 	}
 
-	const valueTypeNode = await typeChecker.typeToTypeNode(valueType, node, NodeBuilderFlags.NoTruncation);
-
-	if (!valueTypeNode) {
-		return context.error(node, "unresolved-coalescing-value-type");
-	}
-
-	const typeArgument = await DCommon.asyncPipe(
-		context.transform(valueTypeNode, typeTransformers.value),
-		DEither.unwrapRight,
-	);
+	const typeArgument = await useGoType(valueType, node, context);
 
 	if (DEither.isLeft(typeArgument)) {
 		return typeArgument;
@@ -76,13 +67,12 @@ export async function coalescingExpressionHandler(
 	const packageName = context.registerSharedDependency(arrayCoalescingDependency.value);
 
 	return context.success({
-		before: typeArgument.before,
 		result: GoAST.createInstantiationExpression({
 			target: GoAST.createSelectorExpression({
 				target: packageName,
 				identifier: coalescingFunctionIdentifier,
 			}),
-			typeArguments: DCommon.cast([typeArgument.result]),
+			typeArguments: DCommon.cast([typeArgument]),
 		}),
 	});
 }

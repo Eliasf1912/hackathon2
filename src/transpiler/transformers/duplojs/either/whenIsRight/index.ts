@@ -4,34 +4,12 @@ import { TsAST } from "@typescript";
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
-import { NodeBuilderFlags, SignatureKind, type Type } from "typescript/async";
+import { SignatureKind } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { typeTransformers } from "../../../type";
-import { registerEitherRuntime } from "../isRight";
+import { useGoType } from "../../../../resolveGoType";
 import { createKindPredicate, createValueGetter, resolveEitherMembers, resolveInputType } from "../members";
 import { eitherWhenIsRightDependency, eitherWhenIsRightWithDependency, whenIsRightFunctionIdentifier, whenIsRightWithFunctionIdentifier } from "./sharedDependency";
-
-export async function transformCheckerType(
-	type: Type,
-	enclosingNode: TsAST.Node,
-	context: BuildContext,
-) {
-	const typeNode = await context.transpilation.typeChecker.typeToTypeNode(
-		type,
-		enclosingNode,
-		NodeBuilderFlags.NoTruncation,
-	);
-
-	if (!typeNode) {
-		return context.error(enclosingNode, "unresolved-checker-type");
-	}
-
-	return DCommon.asyncPipe(
-		context.transform(typeNode, typeTransformers.value),
-		DEither.unwrapRight,
-	);
-}
 
 export async function whenIsRightExpressionHandler(
 	node: TsAST.Node,
@@ -66,7 +44,7 @@ export async function whenIsRightExpressionHandler(
 		return context.error(call, "unresolved-when-is-right-callback");
 	}
 
-	const valueType = await transformCheckerType(
+	const valueType = await useGoType(
 		await typeChecker.getParameterType(callbackSignature, 0),
 		call,
 		context,
@@ -76,7 +54,7 @@ export async function whenIsRightExpressionHandler(
 		return valueType;
 	}
 
-	const outputType = await transformCheckerType(
+	const outputType = await useGoType(
 		await typeChecker.getReturnTypeOfSignature(callbackSignature),
 		call,
 		context,
@@ -98,7 +76,6 @@ export async function whenIsRightExpressionHandler(
 		return members;
 	}
 
-	const runtimePackage = registerEitherRuntime(context);
 	const packageName = context.registerSharedDependency(eitherWhenIsRightDependency.value);
 
 	if (isCurried) {
@@ -106,7 +83,6 @@ export async function whenIsRightExpressionHandler(
 	}
 
 	return context.success({
-		before: DArray.concat(valueType.before, outputType.before),
 		result: GoAST.createCallExpression({
 			callee: GoAST.createInstantiationExpression({
 				target: GoAST.createSelectorExpression({
@@ -115,11 +91,11 @@ export async function whenIsRightExpressionHandler(
 						? whenIsRightWithFunctionIdentifier
 						: whenIsRightFunctionIdentifier,
 				}),
-				typeArguments: DCommon.cast([valueType.result, outputType.result]),
+				typeArguments: DCommon.cast([valueType, outputType]),
 			}),
 			arguments: [
-				createKindPredicate(members, "right", runtimePackage),
-				createValueGetter(members, valueType.result, context),
+				createKindPredicate(members, "right", context),
+				createValueGetter(members, valueType, context),
 			],
 		}),
 	});

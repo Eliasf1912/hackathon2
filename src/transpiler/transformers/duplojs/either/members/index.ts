@@ -5,32 +5,37 @@ import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { SignatureKind, type Signature, type Type } from "typescript/async";
+import type { SharedDependency } from "@transformer";
 import type { BuildContext } from "../../../../context/build";
-import { transformCheckerType } from "../whenIsRight";
-import { isFunctionIdentifier } from "../isRight/sharedDependency";
+import type { GoType, GoTypeResolution } from "../../../../resolveGoType";
+import { eitherIsDependency, isFunctionIdentifier } from "../isRight/sharedDependency";
 import { successTypeIdentifier } from "../success/sharedDependency";
 import { leftTypeIdentifier } from "../left/sharedDependency";
 import { failTypeIdentifier } from "../fail/sharedDependency";
-
-type GoType = GoAST.Type | GoAST.TypeReference;
 
 export interface EitherMember {
 	readonly kind: "right" | "left";
 	readonly goType: GoType;
 	readonly valueType: GoType;
+
+	/**
+	 * Declarations of the Go type, registered only when the variant is emitted.
+	 */
+	readonly dependencies: readonly SharedDependency[];
 }
 
 function render(type: GoType) {
 	return GoPrinter.renderNode(type);
 }
 
-function classify(goType: GoType): EitherMember | undefined {
+function classify({ type: goType, dependencies }: GoTypeResolution): EitherMember | undefined {
 	if (DModeling.hasTagValue(goType, "[node]type-reference-package")) {
 		return goType.identifier === failTypeIdentifier
 			? {
 				kind: "left",
 				goType,
 				valueType: GoAST.createIdentifier("JSUndefined"),
+				dependencies,
 			}
 			: undefined;
 	}
@@ -51,6 +56,7 @@ function classify(goType: GoType): EitherMember | undefined {
 			kind: "right",
 			goType,
 			valueType,
+			dependencies,
 		};
 	}
 
@@ -59,10 +65,26 @@ function classify(goType: GoType): EitherMember | undefined {
 			kind: "left",
 			goType,
 			valueType,
+			dependencies,
 		};
 	}
 
 	return undefined;
+}
+
+/**
+ * Registers the declarations of the variants emitted in the generated code.
+ */
+function registerMembers(members: readonly EitherMember[], context: BuildContext) {
+	return DArray.reduce(
+		DArray.flat(DArray.map(members, (member) => member.dependencies)),
+		DArray.reduceFrom(members),
+		({ element, lastValue, next }) => {
+			context.registerSharedDependency(element);
+
+			return next(lastValue);
+		},
+	);
 }
 
 /**
@@ -86,13 +108,16 @@ export async function resolveEitherMembers(
 		memberTypes,
 		DArray.map(
 			async(memberType) => {
-				const goType = await transformCheckerType(memberType, node, context);
+				const resolution = await DCommon.asyncPipe(
+					context.resolveGoType(memberType, node),
+					DEither.unwrapRight,
+				);
 
-				if (DEither.isLeft(goType)) {
-					return goType;
+				if (DEither.isLeft(resolution)) {
+					return resolution;
 				}
 
-				const member = classify(goType.result);
+				const member = classify(resolution);
 
 				if (!member) {
 					return context.error(node, {
@@ -198,10 +223,12 @@ export function createKindCheck(
 	members: readonly EitherMember[],
 	kind: EitherMember["kind"],
 	value: GoAST.Expression,
-	packageName: GoAST.Identifier,
+	context: BuildContext,
 ): GoAST.Expression {
+	const packageName = context.registerSharedDependency(eitherIsDependency.value);
+
 	return DArray.reduce(
-		DArray.filter(members, (member) => member.kind === kind),
+		registerMembers(DArray.filter(members, (member) => member.kind === kind), context),
 		DArray.reduceFrom<GoAST.Expression | undefined>(undefined),
 		({ element, lastValue, next }) => {
 			const check = GoAST.createCallExpression({
@@ -234,7 +261,7 @@ export function createKindCheck(
 export function createKindPredicate(
 	members: readonly EitherMember[],
 	kind: EitherMember["kind"],
-	packageName: GoAST.Identifier,
+	context: BuildContext,
 ) {
 	const input = GoAST.createIdentifier("input");
 
@@ -249,7 +276,7 @@ export function createKindPredicate(
 		body: GoAST.createBlockStatement({
 			statements: [
 				GoAST.createReturnStatement({
-					values: [createKindCheck(members, kind, input, packageName)],
+					values: [createKindCheck(members, kind, input, context)],
 				}),
 			],
 		}),
@@ -271,9 +298,12 @@ export function createValueGetter(
 	const acceptsAny = DCommon.equal(render(valueType), render(GoAST.builtinTypeReferences.any));
 
 	const cases = DArray.map(
-		DArray.filter(
-			members,
-			(member) => acceptsAny || DCommon.equal(render(member.valueType), render(valueType)),
+		registerMembers(
+			DArray.filter(
+				members,
+				(member) => acceptsAny || DCommon.equal(render(member.valueType), render(valueType)),
+			),
+			context,
 		),
 		(member) => GoAST.createTypeSwitchCase({
 			types: DCommon.cast([member.goType]),
@@ -343,7 +373,7 @@ export function createInformationStatements(
 			identifier: either,
 			expression: value,
 			cases: DArray.map(
-				members,
+				registerMembers(members, context),
 				(member) => GoAST.createTypeSwitchCase({
 					types: DCommon.cast([member.goType]),
 					statements: [

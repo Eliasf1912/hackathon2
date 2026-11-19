@@ -3,6 +3,12 @@ import { duploJSEitherDeclarationTransformer, duploJSEitherExpressionTransformer
 import { duploJSCommonExpressionTransformer } from "./common";
 import { duploJSArrayExpressionTransformer } from "./array";
 import { duploJSStringExpressionTransformer } from "./string";
+import { eitherCheckerTypeResolver } from "./either/checkerType";
+import type { CheckerTypeResolver } from "../../resolveGoType";
+
+export const duploJSCheckerTypeResolvers = DCommon.memo(
+	(): readonly CheckerTypeResolver[] => [eitherCheckerTypeResolver],
+);
 import type { GoAST } from "@go";
 import { type Transformer } from "@transformer";
 

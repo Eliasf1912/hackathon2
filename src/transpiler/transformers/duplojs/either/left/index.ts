@@ -6,7 +6,7 @@ import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { transformCheckerType } from "../whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 import { typeTransformers } from "../../../type";
 import { eitherLeftDependency, eitherLeftTypeDependency, leftFunctionIdentifier, leftTypeIdentifier } from "./sharedDependency";
 
@@ -71,7 +71,7 @@ export async function leftExpressionHandler(
 	}
 
 	const { typeChecker } = context.transpilation;
-	const valueType = await transformCheckerType(
+	const valueType = await useGoType(
 		await typeChecker.getBaseTypeOfLiteralType(
 			await typeChecker.getTypeAtLocation(valueNode),
 		),
@@ -87,13 +87,12 @@ export async function leftExpressionHandler(
 	const packageName = context.registerSharedDependency(eitherLeftDependency.value);
 
 	return context.success({
-		before: valueType.before,
 		result: GoAST.createInstantiationExpression({
 			target: GoAST.createSelectorExpression({
 				target: packageName,
 				identifier: leftFunctionIdentifier,
 			}),
-			typeArguments: DCommon.cast([valueType.result]),
+			typeArguments: DCommon.cast([valueType]),
 		}),
 	});
 }

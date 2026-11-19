@@ -5,38 +5,11 @@ import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DNumber from "@duplojs/lang/number";
-import { NodeBuilderFlags, SignatureKind, type Signature } from "typescript/async";
+import { SignatureKind, type Signature } from "typescript/async";
 import type { BuildContext } from "../../context/build";
-import { typeTransformers } from "../type";
+import { useGoType } from "../../resolveGoType";
 import { blockStatementTransformer } from "../statement/block";
 import { expressionTransformers } from ".";
-
-async function transformSignatureType(
-	type: Awaited<ReturnType<BuildContext["transpilation"]["typeChecker"]["getParameterType"]>>,
-	node: TsAST.Node,
-	context: BuildContext,
-) {
-	const typeNode = await context.transpilation.typeChecker.typeToTypeNode(
-		type,
-		node,
-		NodeBuilderFlags.NoTruncation,
-	);
-
-	if (!typeNode) {
-		return context.error(node, "unresolved-arrow-function-type");
-	}
-
-	const result = await DCommon.asyncPipe(
-		context.transform(typeNode, typeTransformers.value),
-		DEither.unwrapRight,
-	);
-
-	if (!DEither.isLeft(result) && !DArray.lengthEqual(result.before, 0)) {
-		return context.error(node, "un-support-before-on-arrow-function-type");
-	}
-
-	return result;
-}
 
 interface FunctionParameters {
 	arguments: readonly GoAST.FunctionArgument[];
@@ -209,7 +182,7 @@ export const arrowFunctionTransformer: Transformer<GoAST.FunctionLiteral> = crea
 			DArray.map(
 				async(_element, { index }) => {
 					const parameter = DArray.at(node.parameters, index);
-					const type = await transformSignatureType(
+					const type = await useGoType(
 						await typeChecker.getParameterType(parameterSignature, index),
 						node,
 						context,
@@ -220,7 +193,7 @@ export const arrowFunctionTransformer: Transformer<GoAST.FunctionLiteral> = crea
 					}
 
 					if (parameter && TsAST.isArrayBindingPattern(parameter.name)) {
-						return destructureParameter(parameter.name, type.result, context);
+						return destructureParameter(parameter.name, type, context);
 					}
 
 					return {
@@ -228,7 +201,7 @@ export const arrowFunctionTransformer: Transformer<GoAST.FunctionLiteral> = crea
 							identifier: parameter && TsAST.isIdentifier(parameter.name)
 								? context.createSourceIdentifier(parameter.name.text)
 								: GoAST.createIdentifier("_"),
-							type: type.result,
+							type: type,
 						}),
 						prelude: [],
 					};
@@ -257,7 +230,7 @@ export const arrowFunctionTransformer: Transformer<GoAST.FunctionLiteral> = crea
 			return functionArguments;
 		}
 
-		const returnType = await transformSignatureType(
+		const returnType = await useGoType(
 			await typeChecker.getReturnTypeOfSignature(ownSignature),
 			node,
 			context,
@@ -276,7 +249,7 @@ export const arrowFunctionTransformer: Transformer<GoAST.FunctionLiteral> = crea
 		return context.success({
 			result: GoAST.createFunctionLiteral({
 				arguments: functionArguments.arguments,
-				returnTypes: [returnType.result],
+				returnTypes: [returnType],
 				body: GoAST.createBlockStatement({
 					statements: DArray.concat(functionArguments.prelude, body.result.statements),
 				}),

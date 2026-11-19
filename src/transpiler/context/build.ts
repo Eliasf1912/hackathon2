@@ -4,7 +4,9 @@ import type * as DObject from "@duplojs/lang/object";
 import * as DString from "@duplojs/lang/string";
 import { GoAST } from "@go";
 import { TsAST } from "@typescript";
-import type { Symbol } from "typescript/async";
+import type { Symbol, Type } from "typescript/async";
+import { resolveGoType, type GoTypeResolved } from "../resolveGoType";
+import { checkerTypeResolvers } from "../transformers/checkerTypeResolvers";
 import { transform, type Transformer, type TransformerResultNode, type NotfoundTransformer, type TransformationError, type TransformationNotSupported, type TransformationSuccess, type TransformationSuccessPayload, sharedDependencyImportDeclaration, sharedDependencyPackageName, type SharedDependency } from "@transformer";
 import type { FileContext } from "./file";
 import type { TranspilationContext } from "./transpilation";
@@ -46,6 +48,12 @@ export interface BuildContext {
 		entryPattern?: RegExp,
 	): Promise<DEither.Maybe<ResolvedModuleReference>>;
 	registerDependencyFile(dependencyFile: DependencyFile): GoAST.Identifier;
+
+	/**
+	 * Translates a checker type into a Go type by walking the checker types,
+	 * without registering any dependency: see `resolveGoType`.
+	 */
+	resolveGoType(type: Type, node: TsAST.Node): Promise<GoTypeResolved | TransformationError>;
 }
 
 export function createBuildContext(
@@ -87,6 +95,7 @@ export function createBuildContext(
 			file.dependencyFiles.add(filePath);
 			return context.createSourceIdentifier(filePath);
 		},
+		resolveGoType: (type, node) => resolveGoType(type, node, context, checkerTypeResolvers.value),
 		generateIdentifier: () => GoAST.createIdentifier(`Generated_${transpilation.increment()}`),
 		createSourceIdentifier: (value) => DCommon.pipe(
 			value,

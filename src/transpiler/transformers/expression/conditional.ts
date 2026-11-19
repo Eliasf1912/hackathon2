@@ -4,8 +4,8 @@ import { createTransformer, type Transformer } from "@transformer";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
-import { NodeBuilderFlags, TypeFlags } from "typescript/async";
-import { typeTransformers } from "../type";
+import { TypeFlags } from "typescript/async";
+import { useGoType } from "../../resolveGoType";
 import { expressionTransformers } from ".";
 
 /**
@@ -32,19 +32,10 @@ export const conditionalExpressionTransformer: Transformer<GoAST.Identifier> = c
 			return context.notSupport();
 		}
 
-		const resultTypeNode = await typeChecker.typeToTypeNode(
+		const resultType = await useGoType(
 			await typeChecker.getTypeAtLocation(node),
 			node,
-			NodeBuilderFlags.NoTruncation,
-		);
-
-		if (!resultTypeNode) {
-			return context.error(node, "unresolved-conditional-type");
-		}
-
-		const resultType = await DCommon.asyncPipe(
-			context.transform(resultTypeNode, typeTransformers.value),
-			DEither.unwrapRight,
+			context,
 		);
 
 		if (DEither.isLeft(resultType)) {
@@ -80,7 +71,7 @@ export const conditionalExpressionTransformer: Transformer<GoAST.Identifier> = c
 
 		const resultDeclaration = GoAST.createVariableDeclarationZeroValue({
 			identifier: context.generateIdentifier(),
-			typeReference: resultType.result,
+			typeReference: resultType,
 		});
 
 		const result = resultDeclaration.identifier;
@@ -92,7 +83,6 @@ export const conditionalExpressionTransformer: Transformer<GoAST.Identifier> = c
 
 		return context.success({
 			before: DArray.concat(
-				resultType.before,
 				condition.before,
 				[
 					resultDeclaration,

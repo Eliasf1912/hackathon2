@@ -7,7 +7,7 @@ import * as DEither from "@duplojs/lang/either";
 import { SignatureKind, type Signature } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { transformCheckerType } from "../../either/whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 import { arrayMapDependency, arrayMapWithDependency, mapFunctionIdentifier, mapWithFunctionIdentifier } from "./sharedDependency";
 
 export async function mapExpressionHandler(
@@ -58,7 +58,7 @@ export async function mapExpressionHandler(
 		return context.error(call, "unresolved-map-callback");
 	}
 
-	const elementType = await transformCheckerType(
+	const elementType = await useGoType(
 		await typeChecker.getParameterType(callbackSignature, 0),
 		call,
 		context,
@@ -68,7 +68,7 @@ export async function mapExpressionHandler(
 		return elementType;
 	}
 
-	const outputType = await transformCheckerType(
+	const outputType = await useGoType(
 		await typeChecker.getReturnTypeOfSignature(callbackSignature),
 		call,
 		context,
@@ -85,7 +85,6 @@ export async function mapExpressionHandler(
 	}
 
 	return context.success({
-		before: DArray.concat(elementType.before, outputType.before),
 		result: GoAST.createInstantiationExpression({
 			target: GoAST.createSelectorExpression({
 				target: packageName,
@@ -93,7 +92,7 @@ export async function mapExpressionHandler(
 					? mapWithFunctionIdentifier
 					: mapFunctionIdentifier,
 			}),
-			typeArguments: DCommon.cast([elementType.result, outputType.result]),
+			typeArguments: DCommon.cast([elementType, outputType]),
 		}),
 	});
 }

@@ -7,15 +7,6 @@ import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";
 import { expressionTransformers } from "../../../expression";
 import { createKindCheck, resolveEitherMembers } from "../members";
-import { eitherIsDependency } from "./sharedDependency";
-
-/**
- * Registers the Either runtime and returns the identifier of the shared
- * dependency package.
- */
-export function registerEitherRuntime(context: BuildContext) {
-	return context.registerSharedDependency(eitherIsDependency.value);
-}
 
 /**
  * `DEither.isRight(value)` checks the Right variants given by the checker:
@@ -59,6 +50,6 @@ export async function isRightExpressionHandler(
 
 	return context.success({
 		before: DArray.concat(value.before, [valueStatement]),
-		result: createKindCheck(members, "right", valueStatement.identifier, registerEitherRuntime(context)),
+		result: createKindCheck(members, "right", valueStatement.identifier, context),
 	});
 }

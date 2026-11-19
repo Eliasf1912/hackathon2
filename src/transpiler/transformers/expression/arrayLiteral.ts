@@ -1,12 +1,11 @@
 import { TsAST } from "@typescript";
-import { NodeBuilderFlags } from "typescript/async";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
-import { typeTransformers } from "../type";
+import { useGoType } from "../../resolveGoType";
 import { expressionTransformers } from ".";
 
 interface ArrayElements {
@@ -27,27 +26,15 @@ export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral> = createTr
 			return context.notSupport();
 		}
 
-		const { typeChecker } = context.transpilation;
-		const typeNode = await typeChecker.typeToTypeNode(
-			await typeChecker.getTypeAtLocation(node),
+		const sliceTypeResult = await useGoType(
+			await context.transpilation.typeChecker.getTypeAtLocation(node),
 			node,
-			NodeBuilderFlags.NoTruncation,
+			context,
 		);
 
-		if (!typeNode) {
-			return context.error(node, "unresolved-array-literal-type");
+		if (DEither.isLeft(sliceTypeResult)) {
+			return sliceTypeResult;
 		}
-
-		const sliceType = await DCommon.asyncPipe(
-			context.transform(typeNode, typeTransformers.value),
-			DEither.unwrapRight,
-		);
-
-		if (DEither.isLeft(sliceType)) {
-			return sliceType;
-		}
-
-		const sliceTypeResult = sliceType.result;
 
 		if (!DModeling.hasTagValue(sliceTypeResult, "[node][type]slice")) {
 			return context.error(node, "array-literal-is-not-a-slice");
@@ -64,7 +51,7 @@ export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral> = createTr
 			DCommon.promiseAll,
 			DArray.reduce(
 				DArray.reduceFrom<ArrayElements>({
-					before: sliceType.before,
+					before: [],
 					elements: [],
 				}),
 				({ element, lastValue, next, exit }) => {

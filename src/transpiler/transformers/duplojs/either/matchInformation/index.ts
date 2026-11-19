@@ -8,7 +8,7 @@ import { SignatureKind, type Signature } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { expressionTransformers } from "../../../expression";
 import { createInformationStatements, createValueGetter, resolveEitherMembers } from "../members";
-import { transformCheckerType } from "../whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 
 interface MatchCases {
 	before: readonly GoAST.Statement[];
@@ -51,7 +51,7 @@ export async function matchInformationExpressionHandler(
 	const signature = await typeChecker.getResolvedSignature(node);
 	const matcherType = await typeChecker.getParameterType(signature, 1);
 
-	const outputType = await transformCheckerType(
+	const outputType = await useGoType(
 		await typeChecker.getTypeAtLocation(node),
 		node,
 		context,
@@ -87,7 +87,7 @@ export async function matchInformationExpressionHandler(
 
 	const resultDeclaration = GoAST.createVariableDeclarationZeroValue({
 		identifier: context.generateIdentifier(),
-		typeReference: outputType.result,
+		typeReference: outputType,
 	});
 
 	const matchCases = await DCommon.asyncPipe(
@@ -121,7 +121,7 @@ export async function matchInformationExpressionHandler(
 				}
 
 				const valueType = takesValue
-					? await transformCheckerType(
+					? await useGoType(
 						await typeChecker.getParameterType(callbackSignature, 0),
 						property,
 						context,
@@ -149,14 +149,14 @@ export async function matchInformationExpressionHandler(
 				const callbackArguments = valueType
 					? [
 						GoAST.createCallExpression({
-							callee: createValueGetter(members, valueType.result, context),
+							callee: createValueGetter(members, valueType, context),
 							arguments: [inputStatement.identifier],
 						}),
 					]
 					: [];
 
 				return {
-					before: DArray.concat(valueType?.before ?? [], callback.before, [callbackStatement]),
+					before: DArray.concat(callback.before, [callbackStatement]),
 					switchCase: GoAST.createExpressionSwitchCase({
 						expressions: DCommon.cast([GoAST.createStringLiteral({ value: property.name.text })]),
 						statements: [
@@ -201,7 +201,6 @@ export async function matchInformationExpressionHandler(
 
 	return context.success({
 		before: DArray.concat(
-			outputType.before,
 			input.before,
 			[inputStatement],
 			matchCases.before,

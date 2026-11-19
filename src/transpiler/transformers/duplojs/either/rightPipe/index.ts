@@ -7,9 +7,8 @@ import * as DEither from "@duplojs/lang/either";
 import { SignatureKind, type Signature } from "typescript/async";
 import { type BuildContext } from "../../../../context/build";
 import { expressionTransformers } from "../../../expression";
-import { registerEitherRuntime } from "../isRight";
 import { createKindCheck, createValueGetter, mergeEitherMembers, resolveEitherMembers, type EitherMember } from "../members";
-import { transformCheckerType } from "../whenIsRight";
+import { useGoType } from "../../../../resolveGoType";
 
 interface RightPipeValues {
 	before: readonly GoAST.Statement[];
@@ -106,8 +105,6 @@ export async function rightPipeExpressionHandler(
 		return context.error(node, "right-pipe-without-input");
 	}
 
-	const packageName = registerEitherRuntime(context);
-
 	const resultDeclaration = GoAST.createVariableDeclarationInitialized({
 		identifier: context.generateIdentifier(),
 		typeReference: GoAST.builtinTypeReferences.any,
@@ -140,7 +137,7 @@ export async function rightPipeExpressionHandler(
 				);
 
 				const valueType = takesValue
-					? await transformCheckerType(
+					? await useGoType(
 						await typeChecker.getParameterType(stepSignature, 0),
 						stepNode,
 						context,
@@ -187,20 +184,20 @@ export async function rightPipeExpressionHandler(
 			const stepValue = element.valueType
 				? [
 					GoAST.createCallExpression({
-						callee: createValueGetter(lastValue.previousMembers, element.valueType.result, context),
+						callee: createValueGetter(lastValue.previousMembers, element.valueType, context),
 						arguments: [result],
 					}),
 				]
 				: [];
 
 			return next({
-				before: DArray.concat(lastValue.before, element.valueType?.before ?? []),
+				before: lastValue.before,
 				statements: DArray.push(
 					lastValue.statements,
 					GoAST.createIfStatement({
 						condition: GoAST.createUnaryExpression({
 							operator: "!",
-							operand: createKindCheck(lastValue.leftMembers, "left", result, packageName),
+							operand: createKindCheck(lastValue.leftMembers, "left", result, context),
 						}),
 						body: GoAST.createBlockStatement({
 							statements: [
