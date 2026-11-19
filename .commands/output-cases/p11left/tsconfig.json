@@ -1,0 +1,6 @@
+{
+	"extends": "@duplojs/code-config/tsconfig/base.json",
+	"include": [
+		"*.ts"
+	]
+}
