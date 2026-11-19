@@ -254,16 +254,17 @@ async function findProjectTypeDeclaration(name: string, context: BuildContext) {
 	const matches: ResolvedTypeDeclaration[] = [];
 
 	for (const fileName of await program.getSourceFileNames()) {
-		const filePath = DEither.unwrapRight(DPath.createAbsolute(fileName));
-
-		if (DString.includes(fileName, "/node_modules/") || DEither.isLeft(filePath)) {
+		if (DString.includes(fileName, "/node_modules/")) {
 			continue;
 		}
 
 		const sourceFile = await program.getSourceFile(fileName);
 		const declaration = sourceFile && findTopLevelTypeDeclaration(sourceFile, name);
+		// Chemin normalisé du fichier (`sourceFile.path`), comme partout ailleurs dans le build :
+		// `fileName` garde la casse du disque et ne correspondrait pas au dossier du projet.
+		const filePath = sourceFile && DEither.unwrapRight(DPath.createAbsolute(sourceFile.path));
 
-		if (declaration) {
+		if (declaration && filePath && !DEither.isLeft(filePath)) {
 			matches.push({
 				declaration,
 				filePath,
@@ -334,11 +335,13 @@ async function resolveImportTypeDeclaration(node: TsAST.ImportTypeNode, context:
 	for (const candidate of candidates) {
 		const sourceFile = await context.transpilation.program.getSourceFile(candidate);
 		const declaration = sourceFile && findTopLevelTypeDeclaration(sourceFile, name);
+		// Chemin normalisé du fichier trouvé : `candidate` garde la casse écrite dans le code.
+		const filePath = sourceFile && DEither.unwrapRight(DPath.createAbsolute(sourceFile.path));
 
-		if (declaration) {
+		if (declaration && filePath && !DEither.isLeft(filePath)) {
 			return {
 				declaration,
-				filePath: candidate,
+				filePath,
 			};
 		}
 	}
