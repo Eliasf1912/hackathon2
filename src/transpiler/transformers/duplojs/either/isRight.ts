@@ -3,9 +3,9 @@ import { TsAST } from "@typescript";
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
-import * as DModeling from "@duplojs/lang/modeling";
 import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
+import { bindOnce } from "../../shared";
 import { createUnionTagTest, getUnionType, transformCheckerType } from "../../type/union";
 import { isRightMethodIdentifier, isRightVariantType } from "./sharedDependency";
 
@@ -24,28 +24,7 @@ export function getRightVariantIndexes(unionType: GoAST.GenericTypeReference) {
 	);
 }
 
-/**
- * Une expression Go qu'on peut relire sans la réévaluer : un identifiant tel quel,
- * sinon une variable temporaire (dans `before`).
- */
-export function bindOnce(expression: GoAST.Expression, context: BuildContext) {
-	if (DModeling.hasTagValue(expression, "[node]identifier")) {
-		return {
-			before: [],
-			result: expression,
-		};
-	}
-
-	const declaration = GoAST.createShortVariableDeclarationStatement({
-		identifier: context.generateIdentifier(),
-		initializer: expression,
-	});
-
-	return {
-		before: [declaration],
-		result: declaration.identifier,
-	};
-}
+export { bindOnce } from "../../shared";
 
 /**
  * `DEither.isRight(x)`.

@@ -6,8 +6,8 @@ import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
-import { convertToType, transformCheckerType, type GoType } from "../../type/union";
-import { chainBranches, flattenChain, getVariants, type Branch } from "./dispatch";
+import { convertToType, getUnionType, transformCheckerType, type GoType } from "../../type/union";
+import { chainBranches, flattenChain, getRightValueType, getVariants, type Branch } from "./dispatch";
 import { bindOnce } from "./isRight";
 import { hasEitherVariantKind, valueFieldIdentifier } from "./sharedDependency";
 import { eitherSuccessDependency, successFunctionIdentifier } from "./success/sharedDependency";
@@ -16,11 +16,11 @@ import { eitherSuccessDependency, successFunctionIdentifier } from "./success/sh
  * Type des valeurs regroupées : l'argument de la variante `Success` du résultat
  * (`Success<number[]>` → `[]float64` ; un tuple donne un tableau `[N]T`).
  */
-function getGroupValuesType(outputType: GoType, context: BuildContext) {
+function getGroupValuesType(outputType: GoType) {
 	const successType = DArray.find(
-		getVariants(context.generateIdentifier(), outputType),
-		({ type }) => hasEitherVariantKind(type, "success"),
-	)?.type;
+		getUnionType(outputType)?.typeArguments ?? [outputType],
+		(type) => hasEitherVariantKind(type, "success"),
+	);
 
 	return successType && DModeling.hasTagValue(successType, "[node]type-reference-generic")
 		? DArray.first(successType.typeArguments)
@@ -91,7 +91,7 @@ export async function groupExpressionHandler(node: TsAST.Node, context: BuildCon
 	}
 
 	const goOutputType = DEither.unwrapRight(outputType);
-	const valuesType = getGroupValuesType(goOutputType, context);
+	const valuesType = getGroupValuesType(goOutputType);
 
 	if (!valuesType) {
 		return context.error(node, "un-support-group-values-type");
@@ -137,8 +137,33 @@ export async function groupExpressionHandler(node: TsAST.Node, context: BuildCon
 		]
 		: [];
 
+	const valueElementType = "elementType" in valuesType ? valuesType.elementType : undefined;
+
+	if (!valueElementType) {
+		return context.error(node, "un-support-group-values-type");
+	}
+
 	const branches = DArray.map(getVariants(item, itemType), (variant) => {
 		if (hasEitherVariantKind(variant.type, "right")) {
+			// Une valeur d'un type plus étroit que les valeurs regroupées (`number` dans
+			// `(number | string)[]`) est convertie.
+			const value = convertToType(
+				{
+					node,
+					expression: GoAST.createSelectorExpression({
+						target: variant.access,
+						identifier: valueFieldIdentifier,
+					}),
+					sourceType: getRightValueType(variant.type),
+					targetType: valueElementType,
+				},
+				context,
+			);
+
+			if (DEither.isLeft(value)) {
+				return value;
+			}
+
 			return DEither.right("branch", {
 				test: variant.tagTest,
 				statements: [
@@ -149,12 +174,7 @@ export async function groupExpressionHandler(node: TsAST.Node, context: BuildCon
 								index,
 							}),
 						]),
-						values: DCommon.cast([
-							GoAST.createSelectorExpression({
-								target: variant.access,
-								identifier: valueFieldIdentifier,
-							}),
-						]),
+						values: DCommon.cast([DEither.unwrapRight(value)]),
 					}),
 				],
 			} satisfies Branch);

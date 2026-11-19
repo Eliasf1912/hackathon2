@@ -7,18 +7,22 @@ import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
-import { createFunctionValueCall, getDeclaredParameterCount, getFunctionValueSignature } from "../../shared";
 import {
+	canConvertToType,
 	convertToType,
-	createUnionTagTest,
-	createUnionVariantAccess,
-	getUnionType,
-	goTypeKey,
 	transformCheckerType,
 	type GoType,
 } from "../../type/union";
 import { createCurriedFunction } from "../curried";
-import { chainBranches, flattenChain, getVariants, type Branch } from "./dispatch";
+import {
+	callFunctionValue,
+	chainBranches,
+	flattenChain,
+	getFunctionValueTypes,
+	getVariants,
+	type Branch,
+	type FunctionValue,
+} from "./dispatch";
 import { createNullishReference } from "../../expression/nullish";
 import { bindOnce } from "./isRight";
 import { getEitherVariant, informationFieldIdentifier, valueFieldIdentifier } from "./sharedDependency";
@@ -27,12 +31,9 @@ import { getEitherVariant, informationFieldIdentifier, valueFieldIdentifier } fr
  * Gestionnaire du matcher (`{ success: (value) => …, "negative-operand": () => … }`),
  * transformé et rangé (évalué une fois), avec les types de sa propre signature.
  */
-interface Handler {
+interface Handler extends FunctionValue {
 	information: string;
 	before: readonly GoAST.Statement[];
-	callee: GoAST.Expression;
-	parameterCount: number;
-	parameterType?: GoType;
 	returnType: GoType;
 }
 
@@ -55,7 +56,6 @@ async function prepareHandler(property: TsAST.ObjectLiteralElementLike, context:
 		return context.error(property.name, "un-support-matcher-key");
 	}
 
-	const { typeChecker } = context.transpilation;
 	const handlerNode = property.initializer;
 
 	const transformed = await DCommon.asyncPipe(
@@ -67,41 +67,19 @@ async function prepareHandler(property: TsAST.ObjectLiteralElementLike, context:
 		return transformed;
 	}
 
-	const signature = await getFunctionValueSignature(handlerNode, context);
+	const types = await getFunctionValueTypes(handlerNode, context);
 
-	if (!signature) {
-		return context.error(handlerNode, "un-support-matcher-handler-type");
-	}
-
-	const parameterCount = await getDeclaredParameterCount(handlerNode, context);
-
-	const parameterType = parameterCount > 0
-		? await transformCheckerType(await typeChecker.getParameterType(signature, 0), handlerNode, context)
-		: undefined;
-
-	if (parameterType && DEither.isLeft(parameterType)) {
-		return parameterType;
-	}
-
-	const returnType = await transformCheckerType(
-		await typeChecker.getReturnTypeOfSignature(signature),
-		handlerNode,
-		context,
-	);
-
-	if (DEither.isLeft(returnType)) {
-		return returnType;
+	if (DEither.isLeft(types)) {
+		return types;
 	}
 
 	const bound = bindOnce(transformed.result, context);
 
 	return DEither.right("handler", {
+		...DEither.unwrapRight(types),
 		information,
 		before: DArray.concat(transformed.before, bound.before),
 		callee: bound.result,
-		parameterCount,
-		parameterType: parameterType && DEither.unwrapRight(parameterType),
-		returnType: DEither.unwrapRight(returnType),
 	});
 }
 
@@ -141,7 +119,6 @@ function applyMatch(
 	context: BuildContext,
 ) {
 	const boundInput = bindOnce(input, context);
-	const unionType = getUnionType(inputType);
 	const output = context.generateIdentifier();
 	const usedHandlers = new Set<Handler>();
 
@@ -210,19 +187,29 @@ function applyMatch(
 			)
 				&& (
 					handler.parameterType === undefined
-					|| (valueType !== undefined && goTypeKey(handler.parameterType) === goTypeKey(valueType))
+					|| (valueType !== undefined && canConvertToType(valueType, handler.parameterType))
 				),
 		);
 
 		const handlerBranches = DArray.map(candidates, (handler) => {
 			usedHandlers.add(handler);
 
+			const call = callFunctionValue(
+				{
+					node,
+					functionValue: handler,
+					value,
+					valueType: valueType ?? undefinedType,
+				},
+				context,
+			);
+
+			if (DEither.isLeft(call)) {
+				return call;
+			}
+
 			return assignOutput(
-				createFunctionValueCall(
-					handler.callee,
-					[value],
-					handler.parameterCount,
-				),
+				DEither.unwrapRight(call),
 				handler.returnType,
 				description.information === undefined
 					? GoAST.createBinaryExpression({
@@ -324,6 +311,9 @@ export async function matchInformationExpressionHandler(node: TsAST.Node, contex
 		return input;
 	}
 
+	// L'entrée est rangée avant les gestionnaires : JS évalue les arguments dans l'ordre.
+	const boundInput = input && bindOnce(input.result, context);
+
 	const preparedHandlers = await DCommon.asyncPipe(
 		matcherNode.properties,
 		DArray.map((property) => prepareHandler(property, context)),
@@ -339,7 +329,7 @@ export async function matchInformationExpressionHandler(node: TsAST.Node, contex
 	const handlers = DArray.map(DArray.filter(preparedHandlers, DEither.isRight), DEither.unwrapRight);
 	const handlersBefore = DArray.flatMap(handlers, ({ before }) => before);
 
-	if (!input || !inputNode) {
+	if (!input || !inputNode || !boundInput) {
 		const curried = await createCurriedFunction(
 			node,
 			context,
@@ -382,7 +372,7 @@ export async function matchInformationExpressionHandler(node: TsAST.Node, contex
 	const applied = applyMatch(
 		{
 			node,
-			input: input.result,
+			input: boundInput.result,
 			inputType: DEither.unwrapRight(inputType),
 			outputType: DEither.unwrapRight(outputType),
 			handlers,
@@ -397,7 +387,7 @@ export async function matchInformationExpressionHandler(node: TsAST.Node, contex
 	const { before, result } = DEither.unwrapRight(applied);
 
 	return context.success({
-		before: DArray.concat(input.before, handlersBefore, before),
+		before: DArray.concat(input.before, boundInput.before, handlersBefore, before),
 		result,
 	});
 }

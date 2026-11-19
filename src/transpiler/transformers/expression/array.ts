@@ -6,6 +6,7 @@ import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { expressionTransformers } from ".";
+import { sequenceEvaluations } from "../shared";
 import { convertExpressionToType, transformCheckerType } from "../type/union";
 
 /**
@@ -86,8 +87,9 @@ export const arrayLiteralTransformer: Transformer<GoAST.SliceLiteral | GoAST.Arr
 			DEither.unwrapRight,
 		);
 
-		const before = DArray.flatMap(transformedElements, ({ before: elementBefore }) => elementBefore);
-		const literalElements = DArray.map(transformedElements, ({ result }) => result);
+		// Ordre JS : un élément ne doit pas être calculé après les calculs préalables
+		// d'un élément suivant.
+		const { before, results: literalElements } = sequenceEvaluations(transformedElements, context);
 
 		return context.success({
 			before,

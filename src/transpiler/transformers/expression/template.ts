@@ -6,6 +6,7 @@ import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { expressionTransformers } from ".";
+import { sequenceEvaluations } from "../shared";
 import { createToStringExpression } from "../duplojs/string/to";
 import { transformCheckerType } from "../type/union";
 
@@ -50,10 +51,8 @@ export const templateExpressionTransformer: Transformer<GoAST.Expression> = crea
 
 					return DEither.right("template-span", {
 						before: value.before,
-						parts: [
-							text,
-							GoAST.createStringLiteral({ value: span.literal.text }),
-						] as readonly GoAST.Expression[],
+						result: text,
+						literal: GoAST.createStringLiteral({ value: span.literal.text }),
 					});
 				},
 			),
@@ -68,6 +67,10 @@ export const templateExpressionTransformer: Transformer<GoAST.Expression> = crea
 
 		const transformedSpans = DArray.map(DArray.filter(spans, DEither.isRight), DEither.unwrapRight);
 
+		// Ordre JS : une substitution ne doit pas être calculée après les calculs préalables
+		// d'une substitution suivante.
+		const { before, results } = sequenceEvaluations(transformedSpans, context);
+
 		const isEmptyText = (part: GoAST.Expression) => DModeling.hasTagValue(part, "[node][expression]literal-string")
 			&& part.value === "";
 
@@ -75,13 +78,16 @@ export const templateExpressionTransformer: Transformer<GoAST.Expression> = crea
 		const [first, ...rest] = DArray.filter(
 			DArray.concat(
 				[GoAST.createStringLiteral({ value: node.head.text })],
-				DArray.flatMap(transformedSpans, ({ parts }) => parts),
+				DArray.flatMap(
+					transformedSpans,
+					({ literal }, { index }) => [DArray.at(results, index) ?? literal, literal],
+				),
 			),
 			(part) => !isEmptyText(part),
 		);
 
 		return context.success({
-			before: DArray.flatMap(transformedSpans, ({ before }) => before),
+			before,
 			result: DArray.reduce(
 				rest,
 				DArray.reduceFrom<GoAST.Expression>(first ?? GoAST.createStringLiteral({ value: "" })),

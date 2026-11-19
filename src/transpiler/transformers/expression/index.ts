@@ -14,6 +14,7 @@ import { conditionalExpressionTransformer } from "./conditional";
 import { nullishLiteralTransformer } from "./nullish";
 import { templateExpressionTransformer } from "./template";
 import { awaitExpressionTransformer } from "./await";
+import { parenthesizedExpressionTransformer } from "./parenthesized";
 
 export const expressionTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Expression>[] => [
@@ -31,5 +32,6 @@ export const expressionTransformers = DCommon.memo(
 		conditionalExpressionTransformer,
 		templateExpressionTransformer,
 		awaitExpressionTransformer,
+		parenthesizedExpressionTransformer,
 	],
 );

@@ -1,6 +1,5 @@
 import { GoAST } from "@go";
 import { TsAST } from "@typescript";
-import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";

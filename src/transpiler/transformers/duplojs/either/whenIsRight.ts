@@ -7,7 +7,6 @@ import * as DEither from "@duplojs/lang/either";
 import * as DModeling from "@duplojs/lang/modeling";
 import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
-import { createFunctionValueCall, getDeclaredParameterCount } from "../../shared";
 import {
 	convertToType,
 	createUnionTagTest,
@@ -18,6 +17,7 @@ import {
 } from "../../type/union";
 import { createCurriedFunction } from "../curried";
 import { bindOnce } from "./isRight";
+import { callFunctionValue, getFunctionValueTypes, getRightValueType, type FunctionValue } from "./dispatch";
 import { isRightVariantType, valueFieldIdentifier } from "./sharedDependency";
 
 interface Variant {
@@ -30,12 +30,9 @@ interface Variant {
  * Fonction reçue par `whenIsRight` / `whenIsRightOtherwise`, transformée et rangée
  * (évaluée une fois), avec ses types instanciés.
  */
-interface FunctionBranch {
+interface FunctionBranch extends FunctionValue {
 	before: readonly GoAST.Statement[];
-	callee: GoAST.Expression;
-	parameterType: GoType;
 	returnType: GoType;
-	parameterCount: number;
 }
 
 interface ApplyWhenParams {
@@ -53,13 +50,9 @@ interface ApplyWhenParams {
  * de sa propre déclaration (`() => [-12]` n'en prend aucun).
  */
 async function prepareFunction(
-	node: TsAST.CallExpression,
 	functionNode: TsAST.Expression,
-	parameterIndex: number,
 	context: BuildContext,
 ): Promise<TransformationError | NotfoundTransformer | DEither.Right<"function-branch", FunctionBranch>> {
-	const { typeChecker } = context.transpilation;
-
 	const transformed = await DCommon.asyncPipe(
 		context.transform(functionNode, expressionTransformers.value),
 		DEither.unwrapRight,
@@ -69,43 +62,18 @@ async function prepareFunction(
 		return transformed;
 	}
 
-	const signature = DArray.first(
-		await (await typeChecker.getParameterType(await typeChecker.getResolvedSignature(node), parameterIndex))
-			.getCallSignatures(),
-	);
+	const types = await getFunctionValueTypes(functionNode, context);
 
-	if (!signature) {
-		return context.error(functionNode, "un-support-when-function-type");
-	}
-
-	const parameterType = await transformCheckerType(
-		await typeChecker.getParameterType(signature, 0),
-		functionNode,
-		context,
-	);
-
-	if (DEither.isLeft(parameterType)) {
-		return parameterType;
-	}
-
-	const returnType = await transformCheckerType(
-		await typeChecker.getReturnTypeOfSignature(signature),
-		functionNode,
-		context,
-	);
-
-	if (DEither.isLeft(returnType)) {
-		return returnType;
+	if (DEither.isLeft(types)) {
+		return types;
 	}
 
 	const bound = bindOnce(transformed.result, context);
 
 	return DEither.right("function-branch", {
+		...DEither.unwrapRight(types),
 		before: DArray.concat(transformed.before, bound.before),
 		callee: bound.result,
-		parameterType: DEither.unwrapRight(parameterType),
-		returnType: DEither.unwrapRight(returnType),
-		parameterCount: await getDeclaredParameterCount(functionNode, context),
 	});
 }
 
@@ -172,19 +140,27 @@ function applyWhen(
 		variants,
 		(variant) => {
 			if (isRightVariantType(variant.type)) {
+				const call = callFunctionValue(
+					{
+						node,
+						functionValue: right,
+						value: GoAST.createSelectorExpression({
+							target: variant.access,
+							identifier: valueFieldIdentifier,
+						}),
+						valueType: getRightValueType(variant.type),
+					},
+					context,
+				);
+
+				if (DEither.isLeft(call)) {
+					return call;
+				}
+
 				return convertToType(
 					{
 						node,
-						expression: createFunctionValueCall(
-							right.callee,
-							[
-								GoAST.createSelectorExpression({
-									target: variant.access,
-									identifier: valueFieldIdentifier,
-								}),
-							],
-							right.parameterCount,
-						),
+						expression: DEither.unwrapRight(call),
 						sourceType: right.returnType,
 						targetType: outputType,
 					},
@@ -204,28 +180,24 @@ function applyWhen(
 				);
 			}
 
-			const argument = convertToType(
+			const call = callFunctionValue(
 				{
 					node,
-					expression: variant.access,
-					sourceType: variant.type,
-					targetType: otherwise.parameterType,
+					functionValue: otherwise,
+					value: variant.access,
+					valueType: variant.type,
 				},
 				context,
 			);
 
-			if (DEither.isLeft(argument)) {
-				return argument;
+			if (DEither.isLeft(call)) {
+				return call;
 			}
 
 			return convertToType(
 				{
 					node,
-					expression: createFunctionValueCall(
-						otherwise.callee,
-						[DEither.unwrapRight(argument)],
-						otherwise.parameterCount,
-					),
+					expression: DEither.unwrapRight(call),
 					sourceType: otherwise.returnType,
 					targetType: outputType,
 				},
@@ -352,9 +324,12 @@ async function whenExpressionHandler(
 		return input;
 	}
 
+	// L'entrée est rangée avant les fonctions : JS évalue les arguments dans l'ordre.
+	const boundInput = input && bindOnce(input.result, context);
+
 	const functions = await DCommon.asyncPipe(
 		DArray.slice(node.arguments, offset),
-		DArray.map((functionNode, { index }) => prepareFunction(node, functionNode, index + offset, context)),
+		DArray.map((functionNode) => prepareFunction(functionNode, context)),
 		DCommon.promiseAll,
 	);
 
@@ -375,7 +350,7 @@ async function whenExpressionHandler(
 
 	const functionsBefore = DArray.concat(right.before, otherwise?.before ?? []);
 
-	if (!input || !inputNode) {
+	if (!input || !inputNode || !boundInput) {
 		const curried = await createCurriedFunction(
 			node,
 			context,
@@ -419,7 +394,7 @@ async function whenExpressionHandler(
 	const applied = applyWhen(
 		{
 			node,
-			input: input.result,
+			input: boundInput.result,
 			inputType: DEither.unwrapRight(inputType),
 			outputType: DEither.unwrapRight(outputType),
 			right,
@@ -435,7 +410,7 @@ async function whenExpressionHandler(
 	const { before, result } = DEither.unwrapRight(applied);
 
 	return context.success({
-		before: DArray.concat(input.before, functionsBefore, before),
+		before: DArray.concat(input.before, boundInput.before, functionsBefore, before),
 		result,
 	});
 }

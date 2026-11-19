@@ -1,6 +1,7 @@
 import * as DArray from "@duplojs/lang/array";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
+import * as DModeling from "@duplojs/lang/modeling";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
@@ -54,16 +55,22 @@ function createArrayBindings(
 			return context.error(element, "un-support-binding-element");
 		}
 
-		return DEither.right(
-			"binding",
+		const name = context.createSourceIdentifier(element.name.text);
+
+		// `_ = name` : Go refuse une variable locale jamais lue, TS l'accepte.
+		return DEither.right("binding", [
 			GoAST.createShortVariableDeclarationStatement({
-				identifier: context.createSourceIdentifier(element.name.text),
+				identifier: name,
 				initializer: GoAST.createIndexExpression({
 					target: source,
 					index: GoAST.createIntegerLiteral({ value: BigInt(index) }),
 				}),
 			}),
-		);
+			GoAST.createAssignmentStatement({
+				targets: DCommon.cast([GoAST.createIdentifier("_")]),
+				values: DCommon.cast([name]),
+			}),
+		] as readonly GoAST.Statement[]);
 	});
 
 	const failed = DArray.find(bindings, DEither.isLeft);
@@ -74,9 +81,9 @@ function createArrayBindings(
 
 	return DEither.right(
 		"bindings",
-		DArray.filter(
+		DArray.flatMap(
 			DArray.map(DArray.filter(bindings, DEither.isRight), DEither.unwrapRight),
-			(binding) => binding !== undefined,
+			(binding) => binding ?? [],
 		),
 	);
 }
@@ -105,6 +112,15 @@ async function transformParameter(parameter: TsAST.ParameterDeclaration, context
 	const identifier = TsAST.isIdentifier(parameter.name)
 		? context.createSourceIdentifier(parameter.name.text)
 		: context.generateIdentifier();
+
+	// Un tableau TS (`number[]`, slice Go) trop court donne `undefined` en JS, une panique
+	// en Go : seule la déstructuration d'un tuple (`[N]T`, longueur garantie) est traduite.
+	if (
+		TsAST.isArrayBindingPattern(parameter.name)
+		&& !DModeling.hasTagValue(DEither.unwrapRight(type), "[node][type]array")
+	) {
+		return context.error(parameter, "un-support-binding-from-array");
+	}
 
 	const bindings = TsAST.isArrayBindingPattern(parameter.name)
 		? createArrayBindings(parameter.name, identifier, context)

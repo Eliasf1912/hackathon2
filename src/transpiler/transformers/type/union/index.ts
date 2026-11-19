@@ -57,7 +57,14 @@ export function createUnionType(members: readonly GoType[], context: BuildContex
 	const uniqueMembers = DCommon.pipe(
 		new Map(DArray.map(members, (member) => [goTypeKey(member), member] as const)),
 		(byKey) => DArray.from(byKey.entries()),
-		DArray.sort(([first], [second]) => first.localeCompare(second)),
+		// Comparaison par unités de code : indépendante de la locale de la machine.
+		DArray.sort(([first], [second]) => {
+			if (first === second) {
+				return 0;
+			}
+
+			return first < second ? -1 : 1;
+		}),
 		DArray.map(([, member]) => member),
 	);
 
@@ -157,15 +164,22 @@ export async function transformCheckerType(
 }
 
 /**
- * Fait passer une valeur Go d'un type à un autre, là où TS l'accepte sans conversion
- * (un membre là où l'union est attendue).
+ * Fait passer une valeur Go d'un type à un autre, là où TS l'accepte sans conversion.
  *
  * - Même type Go : rien à faire.
- * - Le type attendu est une union qui contient le type de la valeur : on construit la variante.
- *
- * Limite connue : une union vers une union plus large (`A | B` vers `A | B | C`)
- * demande un aiguillage par variante, pas encore écrit (erreur explicite).
+ * - Membre vers une union qui le contient : on construit la variante (`Union{Tag: i, Vi: x}`).
+ * - Union vers un de ses membres (rétrécissement : TS sait que seule cette variante est
+ *   possible ici) : `x.Vi`.
+ * - Union vers une autre union (plus large, ou rétrécie) : chaque variante source est
+ *   recopiée dans la variante cible de même type, par une fonction appelée sur place qui
+ *   reçoit la valeur (évaluée une fois). Une variante absente de la cible est impossible
+ *   ici (TS l'a exclue) : `panic` si elle arrivait quand même.
  */
+interface VariantMapping {
+	sourceIndex: number;
+	targetIndex: number;
+}
+
 export function convertToType(
 	params: {
 		node: TsAST.Node;
@@ -177,26 +191,115 @@ export function convertToType(
 ) {
 	const { node, expression, sourceType, targetType } = params;
 	const sourceKey = goTypeKey(sourceType);
+	const targetKey = goTypeKey(targetType);
 
-	if (sourceKey === goTypeKey(targetType)) {
+	if (sourceKey === targetKey) {
 		return DEither.success(expression);
 	}
 
-	const unionType = getUnionType(targetType);
-	const index = unionType && DArray.findIndex(
-		unionType.typeArguments,
-		(member) => goTypeKey(member) === sourceKey,
-	);
+	const sourceUnion = getUnionType(sourceType);
+	const targetUnion = getUnionType(targetType);
 
-	if (!unionType || index === undefined) {
+	const findIndex = (union: GoAST.GenericTypeReference, key: string) => {
+		const index = DArray.findIndex(union.typeArguments, (member) => goTypeKey(member) === key);
+
+		return index === -1 ? undefined : index;
+	};
+
+	if (!sourceUnion && targetUnion) {
+		const index = findIndex(targetUnion, sourceKey);
+
+		if (index !== undefined) {
+			return DEither.success(createUnionValue(targetUnion, index, expression));
+		}
+	}
+
+	if (sourceUnion && !targetUnion) {
+		const index = findIndex(sourceUnion, targetKey);
+
+		if (index !== undefined) {
+			return DEither.success(createUnionVariantAccess(expression, index));
+		}
+	}
+
+	const mappings = sourceUnion && targetUnion
+		? DArray.filter(
+			DArray.map(sourceUnion.typeArguments, (member, { index }) => ({
+				sourceIndex: index,
+				targetIndex: findIndex(targetUnion, goTypeKey(member)),
+			})),
+			(mapping): mapping is VariantMapping => mapping.targetIndex !== undefined,
+		)
+		: [];
+
+	if (!sourceUnion || !targetUnion || DArray.lengthEqual(mappings, 0)) {
 		return context.error(node, {
 			reason: "un-support-type-conversion",
 			from: sourceKey,
-			to: goTypeKey(targetType),
+			to: targetKey,
 		});
 	}
 
-	return DEither.success(createUnionValue(unionType, index, expression));
+	const source = GoAST.createIdentifier("source");
+
+	return DEither.success(
+		GoAST.createCallExpression({
+			callee: GoAST.createFunctionLiteral({
+				arguments: [
+					GoAST.createFunctionArgument({
+						identifier: source,
+						type: sourceUnion,
+					}),
+				],
+				returnTypes: [targetUnion],
+				body: GoAST.createBlockStatement({
+					statements: DArray.concat(
+						DArray.map(mappings, ({ sourceIndex, targetIndex }) => GoAST.createIfStatement({
+							condition: createUnionTagTest(source, sourceIndex),
+							body: GoAST.createBlockStatement({
+								statements: [
+									GoAST.createReturnStatement({
+										values: [
+											createUnionValue(
+												targetUnion,
+												targetIndex,
+												createUnionVariantAccess(source, sourceIndex),
+											),
+										],
+									}),
+								],
+							}),
+						})),
+						[
+							GoAST.createCallExpression({
+								callee: GoAST.createIdentifier("panic"),
+								arguments: [GoAST.createStringLiteral({ value: "unreachable union variant" })],
+							}),
+						],
+					),
+				}),
+			}),
+			arguments: [expression],
+		}),
+	);
+}
+
+/**
+ * La valeur de type `sourceType` peut-elle être passée là où `targetType` est attendu ?
+ * Mêmes règles que `convertToType` : même type, membre ↔ union, ou deux unions qui ont
+ * au moins une variante en commun.
+ */
+export function canConvertToType(sourceType: GoType, targetType: GoType) {
+	const sourceKey = goTypeKey(sourceType);
+	const targetKey = goTypeKey(targetType);
+	const sourceMembers = getUnionType(sourceType)?.typeArguments ?? [sourceType];
+	const targetMembers = getUnionType(targetType)?.typeArguments ?? [targetType];
+
+	return sourceKey === targetKey
+		|| DArray.some(
+			sourceMembers,
+			(source) => DArray.some(targetMembers, (target) => goTypeKey(source) === goTypeKey(target)),
+		);
 }
 
 /**

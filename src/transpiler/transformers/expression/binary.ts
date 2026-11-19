@@ -6,6 +6,8 @@ import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
 import { type BuildContext } from "../../context/build";
+import { createToStringExpression } from "../duplojs/string/to";
+import { goTypeKey, transformCheckerType } from "../type/union";
 
 const binaryOperators: Partial<
 	Record<TsAST.SyntaxKind, GoAST.BinaryOperator>
@@ -15,12 +17,6 @@ const binaryOperators: Partial<
 	[TsAST.SyntaxKind.AsteriskToken]: "*",
 	[TsAST.SyntaxKind.SlashToken]: "/",
 	[TsAST.SyntaxKind.PercentToken]: "%",
-
-	[TsAST.SyntaxKind.AmpersandToken]: "&",
-	[TsAST.SyntaxKind.BarToken]: "|",
-	[TsAST.SyntaxKind.CaretToken]: "^",
-	[TsAST.SyntaxKind.LessThanLessThanToken]: "<<",
-	[TsAST.SyntaxKind.GreaterThanGreaterThanToken]: ">>",
 
 	[TsAST.SyntaxKind.AmpersandAmpersandToken]: "&&",
 	[TsAST.SyntaxKind.BarBarToken]: "||",
@@ -32,6 +28,19 @@ const binaryOperators: Partial<
 	[TsAST.SyntaxKind.GreaterThanToken]: ">",
 	[TsAST.SyntaxKind.GreaterThanEqualsToken]: ">=",
 };
+
+/**
+ * Opérateurs sur les bits : JS convertit les nombres en entiers 32 bits, Go les refuse
+ * sur des `float64`. Pas encore traduits : erreur nommée.
+ */
+const bitwiseOperators: ReadonlySet<TsAST.SyntaxKind> = new Set([
+	TsAST.SyntaxKind.AmpersandToken,
+	TsAST.SyntaxKind.BarToken,
+	TsAST.SyntaxKind.CaretToken,
+	TsAST.SyntaxKind.LessThanLessThanToken,
+	TsAST.SyntaxKind.GreaterThanGreaterThanToken,
+	TsAST.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
 
 /**
  * `&&` et `||` court-circuitent : l'opérande droit n'est évalué que si l'opérande gauche
@@ -111,6 +120,59 @@ async function logicalExpressionHandler(
 	});
 }
 
+/**
+ * Opérandes d'une concaténation qui mélange une chaîne et un autre type : l'autre opérande
+ * est converti comme JS le fait (`DString.to`). `undefined` si ce n'est pas le cas.
+ */
+async function createConcatenation(
+	params: {
+		node: TsAST.BinaryExpression;
+		left: GoAST.Identifier;
+		right: GoAST.Identifier;
+	},
+	context: BuildContext,
+) {
+	const { typeChecker } = context.transpilation;
+	const types = await Promise.all([
+		transformCheckerType(await typeChecker.getTypeAtLocation(params.node.left), params.node.left, context),
+		transformCheckerType(await typeChecker.getTypeAtLocation(params.node.right), params.node.right, context),
+	]);
+	const [leftType, rightType] = types;
+	const failed = DArray.find(types, DEither.isLeft);
+
+	if (failed) {
+		return failed;
+	}
+
+	if (!leftType || !rightType || DEither.isLeft(leftType) || DEither.isLeft(rightType)) {
+		return DEither.right("concatenation", undefined);
+	}
+
+	const stringKey = goTypeKey(GoAST.builtinTypeReferences.string);
+	const isLeftString = goTypeKey(DEither.unwrapRight(leftType)) === stringKey;
+	const isRightString = goTypeKey(DEither.unwrapRight(rightType)) === stringKey;
+
+	if (isLeftString === isRightString) {
+		return DEither.right("concatenation", undefined);
+	}
+
+	const left = isLeftString
+		? params.left
+		: createToStringExpression(params.left, DEither.unwrapRight(leftType), context);
+	const right = isRightString
+		? params.right
+		: createToStringExpression(params.right, DEither.unwrapRight(rightType), context);
+
+	if (!left || !right) {
+		return context.error(params.node, "un-support-concatenation-type");
+	}
+
+	return DEither.right("concatenation", {
+		left,
+		right,
+	});
+}
+
 // Un seul objet : `file.imports` est un `Set`, l'import n'est ajouté qu'une fois.
 const mathImport = GoAST.createImportDeclaration({ path: "math" });
 
@@ -122,7 +184,12 @@ export const binaryExpressionTransformer: Transformer<
 			return context.notSupport();
 		}
 
-		const operator = binaryOperators[node.operatorToken.kind];
+		if (bitwiseOperators.has(node.operatorToken.kind)) {
+			return context.error(node, "un-support-bitwise-operator");
+		}
+
+		const isPower = node.operatorToken.kind === TsAST.SyntaxKind.AsteriskAsteriskToken;
+		const operator = isPower ? "*" : binaryOperators[node.operatorToken.kind];
 
 		if (!operator) {
 			return context.notSupport();
@@ -175,8 +242,9 @@ export const binaryExpressionTransformer: Transformer<
 			[rightAssignment],
 		);
 
-		// Go n'a pas de `%` sur les flottants ; `math.Mod` garde le signe du dividende, comme JS.
-		if (operator === "%") {
+		// Go n'a ni `%` sur les flottants ni `**` : `math.Mod` (signe du dividende, comme JS)
+		// et `math.Pow`.
+		if (operator === "%" || isPower) {
 			context.file.imports.add(mathImport);
 
 			return context.success({
@@ -184,11 +252,40 @@ export const binaryExpressionTransformer: Transformer<
 				result: GoAST.createCallExpression({
 					callee: GoAST.createSelectorExpression({
 						target: GoAST.createIdentifier("math"),
-						identifier: GoAST.createIdentifier("Mod"),
+						identifier: GoAST.createIdentifier(isPower ? "Pow" : "Mod"),
 					}),
 					arguments: [leftAssignment.identifier, rightAssignment.identifier],
 				}),
 			});
+		}
+
+		// `"a" + 1` : JS convertit l'autre opérande en texte ; Go refuse les types mélangés.
+		if (operator === "+") {
+			const concatenation = await createConcatenation(
+				{
+					node,
+					left: leftAssignment.identifier,
+					right: rightAssignment.identifier,
+				},
+				context,
+			);
+
+			if (DEither.isLeft(concatenation)) {
+				return concatenation;
+			}
+
+			const operands = DEither.unwrapRight(concatenation);
+
+			if (operands) {
+				return context.success({
+					before,
+					result: GoAST.createBinaryExpression({
+						operator,
+						left: operands.left,
+						right: operands.right,
+					}),
+				});
+			}
 		}
 
 		return context.success({

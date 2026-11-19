@@ -6,9 +6,9 @@ import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
-import { createFunctionValueCall, getDeclaredParameterCount } from "../../shared";
+import { createFunctionValueCall } from "../../shared";
 import { convertToType, transformCheckerType, type GoType } from "../../type/union";
-import { chainBranches, flattenChain, getVariants, type Branch } from "./dispatch";
+import { chainBranches, flattenChain, getFunctionValueTypes, getRightValueType, getVariants, type Branch } from "./dispatch";
 import { bindOnce } from "./isRight";
 import { hasEitherVariantKind, valueFieldIdentifier } from "./sharedDependency";
 import { eitherSuccessDependency, successFunctionIdentifier } from "./success/sharedDependency";
@@ -17,20 +17,14 @@ interface Step {
 	before: readonly GoAST.Statement[];
 	callee: GoAST.Expression;
 	parameterCount: number;
-	parameterType: GoType;
+	// Absent : l'étape ne déclare aucun paramètre (`() => …`), la valeur n'est pas passée.
+	parameterType?: GoType;
 	returnType: GoType;
 }
 
 type StepResult = TransformationError | NotfoundTransformer | DEither.Right<"step", Step>;
 
-async function prepareStep(
-	node: TsAST.CallExpression,
-	stepNode: TsAST.Expression,
-	parameterIndex: number,
-	context: BuildContext,
-): Promise<StepResult> {
-	const { typeChecker } = context.transpilation;
-
+async function prepareStep(stepNode: TsAST.Expression, context: BuildContext): Promise<StepResult> {
 	const transformed = await DCommon.asyncPipe(
 		context.transform(stepNode, expressionTransformers.value),
 		DEither.unwrapRight,
@@ -40,43 +34,20 @@ async function prepareStep(
 		return transformed;
 	}
 
-	const signature = DArray.first(
-		await (await typeChecker.getParameterType(await typeChecker.getResolvedSignature(node), parameterIndex))
-			.getCallSignatures(),
-	);
+	// Les types de l'étape elle-même : la valeur est convertie vers le paramètre qu'elle
+	// déclare vraiment (`(v: number | string) => …` reçoit une union).
+	const types = await getFunctionValueTypes(stepNode, context);
 
-	if (!signature) {
-		return context.error(stepNode, "un-support-rightPipe-step-type");
-	}
-
-	const parameterType = await transformCheckerType(
-		await typeChecker.getParameterType(signature, 0),
-		stepNode,
-		context,
-	);
-
-	if (DEither.isLeft(parameterType)) {
-		return parameterType;
-	}
-
-	const returnType = await transformCheckerType(
-		await typeChecker.getReturnTypeOfSignature(signature),
-		stepNode,
-		context,
-	);
-
-	if (DEither.isLeft(returnType)) {
-		return returnType;
+	if (DEither.isLeft(types)) {
+		return types;
 	}
 
 	const bound = bindOnce(transformed.result, context);
 
 	return DEither.right("step", {
+		...DEither.unwrapRight(types),
 		before: DArray.concat(transformed.before, bound.before),
 		callee: bound.result,
-		parameterCount: await getDeclaredParameterCount(stepNode, context),
-		parameterType: DEither.unwrapRight(parameterType),
-		returnType: DEither.unwrapRight(returnType),
 	});
 }
 
@@ -100,8 +71,8 @@ interface StageParams {
 	outputType: GoType;
 	// Absent pour la dernière étape : la valeur devient le résultat.
 	next?: {
-		argument: GoAST.Identifier;
-		parameterType: GoType;
+		argument?: GoAST.Identifier;
+		parameterType?: GoType;
 	};
 }
 
@@ -130,6 +101,10 @@ function dispatchStage({ node, stage, outputType, next }: StageParams, context: 
 	const passValue = (expression: GoAST.Expression, sourceType: GoType) => {
 		if (!next) {
 			return returnValue(expression, sourceType);
+		}
+
+		if (!next.argument || !next.parameterType) {
+			return DEither.right("statements", [] as readonly GoAST.Statement[]);
 		}
 
 		const converted = convertToType(
@@ -169,7 +144,7 @@ function dispatchStage({ node, stage, outputType, next }: StageParams, context: 
 								target: variant.access,
 								identifier: valueFieldIdentifier,
 							}),
-							DCommon.pipe(variant.type, getValueType),
+							getRightValueType(variant.type),
 						)
 						: returnValue(variant.access, variant.type);
 				}
@@ -219,15 +194,6 @@ function dispatchStage({ node, stage, outputType, next }: StageParams, context: 
 }
 
 /**
- * Type de la valeur d'un Right générique (`EitherSuccess[float64]` → `float64`).
- */
-function getValueType(type: GoType): GoType {
-	return "typeArguments" in type
-		? DArray.first(type.typeArguments) ?? type
-		: type;
-}
-
-/**
  * `DEither.rightPipe(input, step1, step2…)` : enchaîne des étapes qui peuvent échouer.
  *
  * Comme DuploJS à l'exécution : un `Left` (entrée ou résultat d'une étape) arrête tout et
@@ -274,7 +240,7 @@ export async function rightPipeExpressionHandler(node: TsAST.Node, context: Buil
 
 	const preparedSteps = await DCommon.asyncPipe(
 		stepNodes,
-		DArray.map((stepNode, { index }) => prepareStep(node, stepNode, index + 1, context)),
+		DArray.map((stepNode) => prepareStep(stepNode, context)),
 		DCommon.promiseAll,
 	);
 
@@ -319,7 +285,7 @@ export async function rightPipeExpressionHandler(node: TsAST.Node, context: Buil
 			}
 
 			const { statements, stage } = DEither.unwrapRight(lastValue);
-			const argument = context.generateIdentifier();
+			const argument = step.parameterType && context.generateIdentifier();
 			const result = context.generateIdentifier();
 
 			const dispatched = dispatchStage(
@@ -342,17 +308,23 @@ export async function rightPipeExpressionHandler(node: TsAST.Node, context: Buil
 			return next(DEither.right("body", {
 				statements: DArray.concat(
 					statements,
-					[
-						GoAST.createVariableDeclarationZeroValue({
-							identifier: argument,
-							typeReference: step.parameterType,
-						}),
-					],
+					argument && step.parameterType
+						? [
+							GoAST.createVariableDeclarationZeroValue({
+								identifier: argument,
+								typeReference: step.parameterType,
+							}),
+						]
+						: [],
 					DEither.unwrapRight(dispatched),
 					[
 						GoAST.createShortVariableDeclarationStatement({
 							identifier: result,
-							initializer: createFunctionValueCall(step.callee, [argument], step.parameterCount),
+							initializer: createFunctionValueCall(
+								step.callee,
+								argument ? [argument] : [],
+								step.parameterCount,
+							),
 						}),
 					],
 				),
