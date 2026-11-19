@@ -1,7 +1,7 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
-import { createIsRightMethod, declareEitherVariant, informationFieldIdentifier } from "../sharedDependency";
+import { declareEitherVariant, informationFieldIdentifier } from "../sharedDependency";
 
 export const failTypeIdentifier = GoAST.createIdentifier("EitherFail");
 export const failFunctionIdentifier = GoAST.createIdentifier("EitherFailOf");
@@ -49,7 +49,6 @@ export const eitherFailDependency = DCommon.memo(() => {
 					],
 				}),
 			}),
-			createIsRightMethod(failTypeIdentifier, false),
 			GoAST.createFunctionDeclaration({
 				identifier: failFunctionIdentifier,
 				generic: [],

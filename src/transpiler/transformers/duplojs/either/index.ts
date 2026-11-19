@@ -4,14 +4,46 @@ import { createTransformer, type Transformer } from "@transformer";
 import type { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import * as DPattern from "@duplojs/lang/pattern";
+import { type BuildContext } from "../../../context/build";
 import { successExpressionHandler, successTypeHandler } from "./success";
 import { failExpressionHandler, failTypeHandler } from "./fail";
-import { isRightExpressionHandler } from "./isRight";
+import { isLeftExpressionHandler, isRightExpressionHandler } from "./isRight";
 import { whenIsRightExpressionHandler, whenIsRightOtherwiseExpressionHandler } from "./whenIsRight";
 import { matchInformationExpressionHandler } from "./matchInformation";
 import { rightPipeExpressionHandler } from "./rightPipe";
 import { groupExpressionHandler } from "./group";
+import { unwrapRightExpressionHandler } from "./unwrapRight";
 import { eitherVariantExpressionHandler, eitherVariantTypeHandler, eitherVariants } from "./variant";
+
+type TransformerResult = ReturnType<Transformer<GoAST.Expression>["transformer"]>;
+
+type ExpressionHandler = (
+	node: TsAST.Node,
+	context: BuildContext,
+) => TransformerResult | Promise<TransformerResult>;
+
+/**
+ * Fonctions du domaine `@duplojs/lang/either`, par nom exporté. Une fonction absente est
+ * signalée explicitement (`transformation-error`).
+ */
+const expressionHandlers = new Map<string, ExpressionHandler>([
+	["success", successExpressionHandler],
+	["fail", failExpressionHandler],
+	["isRight", isRightExpressionHandler],
+	["isLeft", isLeftExpressionHandler],
+	["whenIsRight", whenIsRightExpressionHandler],
+	["whenIsRightOtherwise", whenIsRightOtherwiseExpressionHandler],
+	["unwrapRight", unwrapRightExpressionHandler],
+	["matchInformation", matchInformationExpressionHandler],
+	["rightPipe", rightPipeExpressionHandler],
+	// Modèle synchrone (`Promise<T>` → `T`) : mêmes parcours séquentiels que DuploJS.
+	["rightAsyncPipe", rightPipeExpressionHandler],
+	["group", groupExpressionHandler],
+	["asyncGroup", groupExpressionHandler],
+	["left", (node, context) => eitherVariantExpressionHandler(node, eitherVariants.left, context)],
+	["right", (node, context) => eitherVariantExpressionHandler(node, eitherVariants.right, context)],
+	["error", (node, context) => eitherVariantExpressionHandler(node, eitherVariants.error, context)],
+]);
 
 export const duploJSEitherDeclarationTransformer: Transformer<GoAST.Declaration> = createTransformer(
 	(_node, context) => context.notSupport(),
@@ -39,67 +71,11 @@ export const duploJSEitherExpressionTransformer: Transformer<GoAST.Expression> =
 			return context.notSupport();
 		}
 
-		return DCommon.pipe(
-			moduleReference.symbol.name,
-			DPattern.match(
-				DCommon.equal("success"),
-				() => successExpressionHandler(
-					node,
-					context,
-				),
-			),
-			DPattern.match(
-				DCommon.equal("fail"),
-				() => failExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("isRight"),
-				() => isRightExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("whenIsRight"),
-				() => whenIsRightExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("asyncGroup"),
-				() => groupExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("rightAsyncPipe"),
-				() => rightPipeExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("group"),
-				() => groupExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("rightPipe"),
-				() => rightPipeExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("matchInformation"),
-				() => matchInformationExpressionHandler(node, context),
-			),
-			DPattern.match(
-				DCommon.equal("left"),
-				() => eitherVariantExpressionHandler(node, eitherVariants.left, context),
-			),
-			DPattern.match(
-				DCommon.equal("right"),
-				() => eitherVariantExpressionHandler(node, eitherVariants.right, context),
-			),
-			DPattern.match(
-				DCommon.equal("error"),
-				() => eitherVariantExpressionHandler(node, eitherVariants.error, context),
-			),
-			DPattern.match(
-				DCommon.equal("whenIsRightOtherwise"),
-				() => whenIsRightOtherwiseExpressionHandler(node, context),
-			),
-			DPattern.otherwise(
-				() => context.error(node),
-			),
-		);
+		const handler = expressionHandlers.get(moduleReference.symbol.name);
+
+		return handler
+			? handler(node, context)
+			: context.error(node);
 	},
 );
 

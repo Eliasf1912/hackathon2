@@ -7,44 +7,36 @@ import { type BuildContext } from "../../../context/build";
 import { expressionTransformers } from "../../expression";
 import { bindOnce } from "../../shared";
 import { createUnionTagTest, getUnionType, transformCheckerType } from "../../type/union";
-import { isRightMethodIdentifier, isRightVariantType } from "./sharedDependency";
-
-/**
- * Indexes des variantes Right d'une union Go.
- */
-export function getRightVariantIndexes(unionType: GoAST.GenericTypeReference) {
-	return DCommon.pipe(
-		unionType.typeArguments,
-		DArray.map((member, { index }) => ({
-			member,
-			index,
-		})),
-		DArray.filter(({ member }) => isRightVariantType(member)),
-		DArray.map(({ index }) => index),
-	);
-}
+import { hasEitherVariantKind } from "./sharedDependency";
 
 export { bindOnce } from "../../shared";
 
 /**
- * `DEither.isRight(x)`.
+ * `DEither.isRight(x)` / `DEither.isLeft(x)` : le genre de chaque variante est connu par
+ * son type Go (registre des variantes).
  *
- * - `x` est une union (`UnionN`) : test du `Tag` sur les variantes Right,
- *   `x.Tag == 1 || x.Tag == 3`. Aucune variante Right : `false`.
- * - `x` est une variante seule : `x.IsRight()`, méthode déclarée sur chaque variante.
+ * - `x` est une union (`UnionN`) : test du `Tag` sur les variantes du genre,
+ *   `x.Tag == 1 || x.Tag == 3` ;
+ * - sinon, ou si aucune variante n'est du genre : une constante, connue à la compilation
+ *   (`x` reste évalué, comme en JS).
  *
- * Limite connue : `isRight` utilisé comme valeur (`DArray.filter(list, DEither.isRight)`)
- * n'est pas encore pris en charge.
+ * Limite connue : utilisé comme valeur (`DArray.filter(list, DEither.isRight)`).
  */
-export async function isRightExpressionHandler(node: TsAST.Node, context: BuildContext) {
+async function eitherKindExpressionHandler(
+	node: TsAST.Node,
+	context: BuildContext,
+	kind: "right" | "left",
+) {
+	const name = kind === "right" ? "isRight" : "isLeft";
+
 	if (!TsAST.isCallExpression(node)) {
-		return context.error(node, "un-support-isRight-as-value");
+		return context.error(node, `un-support-${name}-as-value`);
 	}
 
 	const input = DArray.first(node.arguments);
 
 	if (!input || !DArray.lengthEqual(node.arguments, 1)) {
-		return context.error(node, "un-support-isRight-arguments");
+		return context.error(node, `un-support-${name}-arguments`);
 	}
 
 	const either = await DCommon.asyncPipe(
@@ -66,28 +58,21 @@ export async function isRightExpressionHandler(node: TsAST.Node, context: BuildC
 		return inputType;
 	}
 
-	const unionType = getUnionType(DEither.unwrapRight(inputType));
-
-	if (!unionType) {
-		return context.success({
-			before: either.before,
-			result: GoAST.createCallExpression({
-				callee: GoAST.createSelectorExpression({
-					target: either.result,
-					identifier: isRightMethodIdentifier,
-				}),
-				arguments: [],
-			}),
-		});
-	}
-
+	const goInputType = DEither.unwrapRight(inputType);
+	const unionType = getUnionType(goInputType);
 	const bound = bindOnce(either.result, context);
 
-	const condition = DArray.reduce(
-		getRightVariantIndexes(unionType),
+	const condition = unionType && DArray.reduce(
+		DArray.filter(
+			DArray.map(unionType.typeArguments, (member, { index }) => ({
+				member,
+				index,
+			})),
+			({ member }) => hasEitherVariantKind(member, kind),
+		),
 		DArray.reduceFrom<GoAST.Expression | undefined>(undefined),
 		({ element, lastValue, next }) => {
-			const test = createUnionTagTest(bound.result, element);
+			const test = createUnionTagTest(bound.result, element.index);
 
 			return next(
 				lastValue
@@ -101,23 +86,33 @@ export async function isRightExpressionHandler(node: TsAST.Node, context: BuildC
 		},
 	);
 
-	if (!condition) {
+	if (condition) {
 		return context.success({
-			before: DArray.concat(
-				either.before,
-				[
-					GoAST.createAssignmentStatement({
-						targets: DCommon.cast([GoAST.createIdentifier("_")]),
-						values: DCommon.cast([either.result]),
-					}),
-				],
-			),
-			result: GoAST.createBooleanLiteral({ value: false }),
+			before: DArray.concat(either.before, bound.before),
+			result: condition,
 		});
 	}
 
 	return context.success({
-		before: DArray.concat(either.before, bound.before),
-		result: condition,
+		before: DArray.concat(
+			either.before,
+			[
+				GoAST.createAssignmentStatement({
+					targets: DCommon.cast([GoAST.createIdentifier("_")]),
+					values: DCommon.cast([either.result]),
+				}),
+			],
+		),
+		result: GoAST.createBooleanLiteral({
+			value: !unionType && hasEitherVariantKind(goInputType, kind),
+		}),
 	});
+}
+
+export function isRightExpressionHandler(node: TsAST.Node, context: BuildContext) {
+	return eitherKindExpressionHandler(node, context, "right");
+}
+
+export function isLeftExpressionHandler(node: TsAST.Node, context: BuildContext) {
+	return eitherKindExpressionHandler(node, context, "left");
 }

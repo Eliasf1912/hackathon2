@@ -39,7 +39,15 @@ export async function transformSourceFile(
 				init: [],
 			}),
 			async({ item, lastValue, next, exit }) => {
-				if (TsAST.isImportDeclaration(item)) {
+				// Rien à l'exécution : les imports (résolus à l'usage) et les déclarations de
+				// type seules (`type X = …`, `interface X`), déjà vérifiées par TS.
+				// shortcut: une déclaration de type n'est pas traduite en type Go ; à faire
+				// (alias Go, Go 1.24) quand une valeur aura besoin de son nom.
+				if (
+					TsAST.isImportDeclaration(item)
+					|| TsAST.isTypeAliasDeclaration(item)
+					|| TsAST.isInterfaceDeclaration(item)
+				) {
 					return next(lastValue);
 				}
 

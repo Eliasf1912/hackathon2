@@ -7,6 +7,7 @@ import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
 import { type BuildContext } from "../../context/build";
 import { createToStringExpression } from "../duplojs/string/to";
+import { importStandardPackage } from "../shared";
 import { goTypeKey, transformCheckerType } from "../type/union";
 
 const binaryOperators: Partial<
@@ -173,9 +174,6 @@ async function createConcatenation(
 	});
 }
 
-// Un seul objet : `file.imports` est un `Set`, l'import n'est ajouté qu'une fois.
-const mathImport = GoAST.createImportDeclaration({ path: "math" });
-
 export const binaryExpressionTransformer: Transformer<
 	GoAST.BinaryExpression | GoAST.Identifier | GoAST.CallExpression
 > = createTransformer(
@@ -245,13 +243,11 @@ export const binaryExpressionTransformer: Transformer<
 		// Go n'a ni `%` sur les flottants ni `**` : `math.Mod` (signe du dividende, comme JS)
 		// et `math.Pow`.
 		if (operator === "%" || isPower) {
-			context.file.imports.add(mathImport);
-
 			return context.success({
 				before,
 				result: GoAST.createCallExpression({
 					callee: GoAST.createSelectorExpression({
-						target: GoAST.createIdentifier("math"),
+						target: importStandardPackage("math", context),
 						identifier: GoAST.createIdentifier(isPower ? "Pow" : "Mod"),
 					}),
 					arguments: [leftAssignment.identifier, rightAssignment.identifier],

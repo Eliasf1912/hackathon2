@@ -5,6 +5,7 @@ export * from "./call";
 export * from "./instantiatedSignature";
 export * from "./functionValue";
 export * from "./sequence";
+export * from "./standardPackage";
 
 export const sharedStatementTransformers = DCommon.memo(
 	() => [callExpressionTransformer],

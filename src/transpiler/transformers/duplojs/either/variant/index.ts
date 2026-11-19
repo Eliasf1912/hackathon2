@@ -5,10 +5,11 @@ import * as DModeling from "@duplojs/lang/modeling";
 import { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import { type BuildContext } from "../../../../context/build";
-import { callExpressionTransformer, getInstantiatedSignature } from "../../../shared";
+import { callExpressionTransformer, getInstantiatedSignature, sequenceEvaluations } from "../../../shared";
 import { typeTransformers } from "../../../type";
-import { transformCheckerType } from "../../../type/union";
-import { type EitherVariant } from "./sharedDependency";
+import { transformCheckerType, type GoType } from "../../../type/union";
+import { expressionTransformers } from "../../../expression";
+import { type EitherVariant, type EitherVariantForm } from "./sharedDependency";
 
 export { eitherVariants } from "./sharedDependency";
 
@@ -25,6 +26,16 @@ export async function eitherVariantTypeHandler(
 
 	if (!valueTypeNode) {
 		return context.error(node, "un-support-either-variant-without-value-type");
+	}
+
+	// `Left<"x", undefined>` : la forme sans valeur, dont le JSON n'a pas de clé `value`.
+	if (valueTypeNode.kind === TsAST.SyntaxKind.UndefinedKeyword && variant.empty) {
+		return context.success({
+			result: GoAST.createPackageTypeReference({
+				packageName: context.registerSharedDependency(variant.empty.dependency.value),
+				identifier: variant.empty.typeIdentifier,
+			}),
+		});
 	}
 
 	const valueType = await DCommon.asyncPipe(
@@ -48,6 +59,64 @@ export async function eitherVariantTypeHandler(
 	});
 }
 
+function isEmptyForm(type: GoType, empty: EitherVariantForm) {
+	return DModeling.hasTagValue(type, "[node]type-reference-package")
+		&& type.identifier.value === empty.typeIdentifier.value;
+}
+
+/**
+ * `left("x", undefined)` : forme sans valeur. Les arguments sont tous évalués dans l'ordre
+ * (comme en JS), mais seule l'information est passée au constructeur ; la valeur
+ * `undefined` est seulement évaluée (`_ = v`).
+ */
+async function emptyVariantCall(node: TsAST.CallExpression, empty: EitherVariantForm, context: BuildContext) {
+	const transformed = await DCommon.asyncPipe(
+		node.arguments,
+		DArray.map((argument) => DCommon.asyncPipe(
+			context.transform(argument, expressionTransformers.value),
+			DEither.unwrapRight,
+		)),
+		DCommon.promiseAll,
+	);
+
+	const failed = DArray.find(transformed, DEither.isLeft);
+
+	if (failed) {
+		return failed;
+	}
+
+	const { before, results } = sequenceEvaluations(
+		DArray.filter(
+			transformed,
+			(evaluation): evaluation is Exclude<typeof evaluation, DEither.Left> => !DEither.isLeft(evaluation),
+		),
+		context,
+	);
+
+	const [information, ...ignored] = results;
+
+	if (!information) {
+		return context.error(node, "un-support-either-variant-arguments");
+	}
+
+	return context.success({
+		before: DArray.concat(
+			before,
+			DArray.map(ignored, (value) => GoAST.createAssignmentStatement({
+				targets: DCommon.cast([GoAST.createIdentifier("_")]),
+				values: DCommon.cast([value]),
+			})),
+		),
+		result: GoAST.createCallExpression({
+			callee: GoAST.createSelectorExpression({
+				target: context.registerSharedDependency(empty.dependency.value),
+				identifier: empty.constructorIdentifier,
+			}),
+			arguments: [information],
+		}),
+	});
+}
+
 /**
  * `DEither.left(information, value)` → `shard_dependencies.EitherLeftOf[T](information, value)`
  * (de même pour `right` et `error(value)`).
@@ -61,7 +130,23 @@ export async function eitherVariantExpressionHandler(
 	context: BuildContext,
 ) {
 	if (TsAST.isCallExpression(node)) {
-		return context.transform(node, [callExpressionTransformer]);
+		const { empty } = variant;
+		const returnType = empty && await transformCheckerType(
+			await context.transpilation.typeChecker.getTypeAtLocation(node),
+			node,
+			context,
+		);
+
+		if (
+			!empty
+			|| !returnType
+			|| DEither.isLeft(returnType)
+			|| !isEmptyForm(DEither.unwrapRight(returnType), empty)
+		) {
+			return context.transform(node, [callExpressionTransformer]);
+		}
+
+		return emptyVariantCall(node, empty, context);
 	}
 
 	if (!TsAST.isIdentifier(node) && !TsAST.isPropertyAccessExpression(node)) {
@@ -85,6 +170,16 @@ export async function eitherVariantExpressionHandler(
 	}
 
 	const goType = DEither.unwrapRight(returnType);
+	const { empty } = variant;
+
+	if (empty && isEmptyForm(goType, empty)) {
+		return context.success({
+			result: GoAST.createSelectorExpression({
+				target: context.registerSharedDependency(empty.dependency.value),
+				identifier: empty.constructorIdentifier,
+			}),
+		});
+	}
 
 	if (!DModeling.hasTagValue(goType, "[node]type-reference-generic")) {
 		return context.error(node, "un-support-either-variant-type");

@@ -2,6 +2,7 @@ import * as DArray from "@duplojs/lang/array";
 import * as DEither from "@duplojs/lang/either";
 import { GoAST } from "@go";
 import { type TsAST } from "@typescript";
+import { type Signature } from "typescript/async";
 import { type NotfoundTransformer, type TransformationError } from "@transformer";
 import { type BuildContext } from "../../context/build";
 import { transformCheckerType, type GoType } from "../type/union";
@@ -22,18 +23,25 @@ export type CurriedApplyResult = (
  * renvoie une fonction qui attend l'entrée. Elle devient une closure Go
  * `func(input In) Out { … }` ; `In` et `Out` viennent du type de l'appel, déjà instancié
  * par son contexte (paramètre de `pipe`…). `apply` produit le corps à partir du paramètre.
+ *
+ * Sert aussi à une fonction générique passée en valeur (`pipe(x, DEither.unwrapRight)`),
+ * avec la signature que le contexte instancie.
  */
 export async function createCurriedFunction(
-	node: TsAST.CallExpression,
+	node: TsAST.Expression,
 	context: BuildContext,
 	apply: (
 		input: GoAST.Identifier,
 		inputType: GoType,
 		outputType: GoType,
 	) => Promise<CurriedApplyResult> | CurriedApplyResult,
+	// Signature à utiliser (référence passée en valeur : celle que le contexte instancie) ;
+	// par défaut, celle du type de l'appel curryfié.
+	knownSignature?: Signature,
 ) {
 	const { typeChecker } = context.transpilation;
-	const signature = DArray.first(await (await typeChecker.getTypeAtLocation(node)).getCallSignatures());
+	const signature = knownSignature
+		?? DArray.first(await (await typeChecker.getTypeAtLocation(node)).getCallSignatures());
 
 	if (!signature) {
 		return context.error(node, "un-support-curried-function-type");

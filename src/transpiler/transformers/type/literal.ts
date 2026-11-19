@@ -30,6 +30,9 @@ export const literalTypeTransformer: Transformer<GoAST.BuiltinTypeReference<"flo
 			return context.success({ result: GoAST.builtinTypeReferences.bool });
 		}
 
-		return context.error(node, "un-support-literal-type");
+		return context.error(node, {
+			reason: "un-support-literal-type",
+			literal: TsAST.SyntaxKind[literal.kind],
+		});
 	},
 );

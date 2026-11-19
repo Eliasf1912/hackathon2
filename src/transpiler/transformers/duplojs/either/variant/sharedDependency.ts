@@ -3,7 +3,6 @@ import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
 import {
-	createIsRightMethod,
 	declareEitherVariant,
 	informationFieldIdentifier,
 	valueFieldIdentifier,
@@ -20,6 +19,8 @@ interface EitherVariantDefinition {
 	information?: string;
 	// Genre supplémentaire, écrit en dernier champ JSON (`Error` : "error").
 	extraKind?: EitherVariantKind;
+	// `false` : variante sans valeur (`left("x")` : valeur `undefined`, absente du JSON).
+	hasValue?: boolean;
 }
 
 function capitalize(value: string) {
@@ -48,8 +49,10 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 			? [definition.side, definition.extraKind]
 			: [definition.side],
 		information: definition.information,
-		hasValue: true,
+		hasValue: definition.hasValue ?? true,
 	});
+
+	const hasValue = definition.hasValue ?? true;
 
 	return DCommon.memo(() => {
 		const generic = GoAST.createIdentifier("T");
@@ -66,10 +69,13 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 			constraint: GoAST.builtinTypeReferences.any,
 		});
 
-		const typeReference = GoAST.createGenericTypeReference({
-			typeReference: definition.typeIdentifier,
-			typeArguments: DCommon.cast([generic]),
-		});
+		const typeReference = hasValue
+			? GoAST.createGenericTypeReference({
+				typeReference: definition.typeIdentifier,
+				typeArguments: DCommon.cast([generic]),
+			})
+			: definition.typeIdentifier;
+		const generics = hasValue ? [typeParameter] : [];
 
 		const sideIdentifier = GoAST.createIdentifier(capitalize(definition.side));
 		const extraIdentifier = definition.extraKind && GoAST.createIdentifier(capitalize(definition.extraKind));
@@ -86,12 +92,16 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 					typeReference: GoAST.builtinTypeReferences.string,
 					tag: `json:"${kindTagPrefix}/information"`,
 				}),
-				GoAST.createStructField({
-					identifier: valueFieldIdentifier,
-					typeReference: generic,
-					tag: `json:"${kindTagPrefix}/value"`,
-				}),
 			],
+			hasValue
+				? [
+					GoAST.createStructField({
+						identifier: valueFieldIdentifier,
+						typeReference: generic,
+						tag: `json:"${kindTagPrefix}/value"`,
+					}),
+				]
+				: [],
 			extraIdentifier && definition.extraKind
 				? [
 					GoAST.createStructField({
@@ -115,11 +125,15 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 						? information
 						: GoAST.createStringLiteral({ value: definition.information }),
 				}),
-				GoAST.createKeyedElement({
-					key: valueFieldIdentifier,
-					value,
-				}),
 			],
+			hasValue
+				? [
+					GoAST.createKeyedElement({
+						key: valueFieldIdentifier,
+						value,
+					}),
+				]
+				: [],
 			extraIdentifier
 				? [
 					GoAST.createKeyedElement({
@@ -136,13 +150,12 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 			declarations: [
 				GoAST.createTypeDefinition({
 					identifier: definition.typeIdentifier,
-					generic: [typeParameter],
+					generic: generics,
 					type: GoAST.createStructType({ fields }),
 				}),
-				createIsRightMethod(typeReference, definition.side === "right"),
 				GoAST.createFunctionDeclaration({
 					identifier: definition.constructorIdentifier,
-					generic: [typeParameter],
+					generic: generics,
 					arguments: DArray.concat(
 						definition.information === undefined
 							? [
@@ -152,12 +165,14 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 								}),
 							]
 							: [],
-						[
-							GoAST.createFunctionArgument({
-								identifier: value,
-								type: generic,
-							}),
-						],
+						hasValue
+							? [
+								GoAST.createFunctionArgument({
+									identifier: value,
+									type: generic,
+								}),
+							]
+							: [],
 					),
 					returnTypes: [typeReference],
 					body: GoAST.createBlockStatement({
@@ -178,23 +193,45 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 	});
 }
 
-export interface EitherVariant {
+export interface EitherVariantForm {
 	typeIdentifier: GoAST.Identifier;
 	constructorIdentifier: GoAST.Identifier;
 	dependency: ReturnType<typeof createEitherVariantDependency>;
+}
+
+export interface EitherVariant extends EitherVariantForm {
 	// Position du type de la valeur dans les arguments de type TS (`Left<I, T>` : 1).
 	valueTypeArgumentIndex: number;
+	// Forme sans valeur, quand le type de la valeur est `undefined` (`left("x")`).
+	empty?: EitherVariantForm;
+}
+
+function defineForm(definition: EitherVariantDefinition): EitherVariantForm {
+	return {
+		typeIdentifier: definition.typeIdentifier,
+		constructorIdentifier: definition.constructorIdentifier,
+		dependency: createEitherVariantDependency(definition),
+	};
 }
 
 function defineVariant(
 	definition: EitherVariantDefinition,
 	valueTypeArgumentIndex: number,
+	withEmptyForm: boolean,
 ): EitherVariant {
+	const name = definition.typeIdentifier.value;
+
 	return {
-		typeIdentifier: definition.typeIdentifier,
-		constructorIdentifier: definition.constructorIdentifier,
-		dependency: createEitherVariantDependency(definition),
+		...defineForm(definition),
 		valueTypeArgumentIndex,
+		empty: withEmptyForm
+			? defineForm({
+				...definition,
+				typeIdentifier: GoAST.createIdentifier(`${name}Empty`),
+				constructorIdentifier: GoAST.createIdentifier(`${name}EmptyOf`),
+				hasValue: false,
+			})
+			: undefined,
 	};
 }
 
@@ -209,6 +246,7 @@ export const eitherVariants = {
 			side: "left",
 		},
 		1,
+		true,
 	),
 	right: defineVariant(
 		{
@@ -217,6 +255,7 @@ export const eitherVariants = {
 			side: "right",
 		},
 		1,
+		true,
 	),
 	error: defineVariant(
 		{
@@ -227,5 +266,6 @@ export const eitherVariants = {
 			extraKind: "error",
 		},
 		0,
+		false,
 	),
 };

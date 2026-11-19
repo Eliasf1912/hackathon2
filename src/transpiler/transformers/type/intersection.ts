@@ -6,6 +6,7 @@ import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { type BuildContext } from "../../context/build";
 import { typeTransformers } from ".";
+import { goTypeKey } from "./union";
 
 /**
  * Une contrainte DuploJS (`DNumber.Positive`, `DArray.LengthEqual<1>`, `DString.Number`…)
@@ -22,12 +23,24 @@ async function isDuploJSConstraint(node: TsAST.TypeNode, context: BuildContext) 
 		/^dist\/[^/]+\/constraints\//,
 	);
 
-	return DEither.isRight(reference);
+	if (DEither.isRight(reference)) {
+		return true;
+	}
+
+	// shortcut: le checker écrit `import("@duplojs/lang/number").Positive` pour un module que
+	// le fichier n'importe pas, et la résolution passe par les imports du fichier. Un tel
+	// membre d'intersection venant de DuploJS est pris pour une contrainte ; à remplacer
+	// par une résolution du module depuis le checker quand l'API le permettra.
+	return TsAST.isImportTypeNode(node)
+		&& TsAST.isLiteralTypeNode(node.argument)
+		&& TsAST.isStringLiteral(node.argument.literal)
+		&& (node.argument.literal.text === "@duplojs/lang"
+			|| node.argument.literal.text.startsWith("@duplojs/lang/"));
 }
 
 /**
- * `number & DNumber.Positive` → `float64` : les contraintes DuploJS sont retirées,
- * il doit rester exactement un type, qui donne le type Go.
+ * `number & DNumber.Positive` → `float64` : les contraintes DuploJS sont retirées ;
+ * les membres restants doivent tous donner le même type Go, qui est le résultat.
  */
 export const intersectionTypeTransformer: Transformer<GoAST.Type | GoAST.TypeReference> = createTransformer(
 	async(node, context) => {
@@ -41,15 +54,41 @@ export const intersectionTypeTransformer: Transformer<GoAST.Type | GoAST.TypeRef
 			DCommon.promiseAll,
 		);
 
-		const [valueType, ...others] = DArray.filter(
+		const members = DArray.filter(
 			node.types,
 			(_member, { index }) => !DArray.at(constraints, index),
 		);
 
-		if (!valueType || !DArray.lengthEqual(others, 0)) {
+		const transformed = await DCommon.asyncPipe(
+			members,
+			DArray.map((member) => DCommon.asyncPipe(
+				context.transform(member, typeTransformers.value),
+				DEither.unwrapRight,
+			)),
+			DCommon.promiseAll,
+		);
+
+		const failed = DArray.find(transformed, DEither.isLeft);
+
+		if (failed) {
+			return failed;
+		}
+
+		const goTypes = DArray.filter(
+			transformed,
+			(member): member is Exclude<typeof member, DEither.Left> => !DEither.isLeft(member),
+		);
+
+		const [first] = goTypes;
+
+		// Membres qui donnent tous le même type Go (`string` et un gabarit de chaîne) : ce type.
+		if (!first || !DArray.every(goTypes, ({ result }) => goTypeKey(result) === goTypeKey(first.result))) {
 			return context.error(node, "un-support-intersection-type");
 		}
 
-		return context.transform(valueType, typeTransformers.value);
+		return context.success({
+			before: DArray.flatMap(goTypes, ({ before }) => before),
+			result: first.result,
+		});
 	},
 );
