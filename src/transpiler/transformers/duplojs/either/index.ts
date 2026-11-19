@@ -61,6 +61,14 @@ export const duploJSEitherExpressionTransformer: Transformer<GoAST.Expression> =
 				() => whenIsRightExpressionHandler(node, context),
 			),
 			DPattern.match(
+				DCommon.equal("asyncGroup"),
+				() => groupExpressionHandler(node, context),
+			),
+			DPattern.match(
+				DCommon.equal("rightAsyncPipe"),
+				() => rightPipeExpressionHandler(node, context),
+			),
+			DPattern.match(
 				DCommon.equal("group"),
 				() => groupExpressionHandler(node, context),
 			),

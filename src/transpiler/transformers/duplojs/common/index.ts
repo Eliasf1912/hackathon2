@@ -43,6 +43,12 @@ export const duploJSCommonExpressionTransformer: Transformer<GoAST.Expression> =
 				DCommon.equal("pipe"),
 				() => pipeExpressionHandler(node, context),
 			),
+			// Modèle synchrone (`Promise<T>` → `T`) : chaque étape est attendue avant la suivante,
+			// comme `asyncPipe` le fait en JS.
+			DPattern.match(
+				DCommon.equal("asyncPipe"),
+				() => pipeExpressionHandler(node, context),
+			),
 			DPattern.otherwise(
 				() => context.error(node),
 			),

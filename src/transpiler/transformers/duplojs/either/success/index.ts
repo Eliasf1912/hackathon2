@@ -1,4 +1,5 @@
 import { type Transformer } from "@transformer";
+import { NodeBuilderFlags } from "typescript/async";
 import { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import * as DArray from "@duplojs/lang/array";
@@ -33,6 +34,7 @@ export async function successExpressionHandler(
 	const returnTypeNode = await typeChecker.typeToTypeNode(
 		await typeChecker.getReturnTypeOfSignature(signature),
 		node,
+		NodeBuilderFlags.NoTruncation,
 	);
 
 	const valueTypeNode = returnTypeNode

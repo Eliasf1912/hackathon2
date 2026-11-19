@@ -1,4 +1,5 @@
 import { TsAST } from "@typescript";
+import { NodeBuilderFlags } from "typescript/async";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import * as DCommon from "@duplojs/lang/common";
@@ -23,6 +24,7 @@ export async function transformFunctionReturnType(
 			await typeChecker.getSignatureFromDeclaration(node),
 		),
 		node,
+		NodeBuilderFlags.NoTruncation,
 	) ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword);
 
 	const returnType = await DCommon.asyncPipe(

@@ -59,7 +59,11 @@ export function createBuildContext(
 		error: (node, content) => DEither.left("transformation-error", {
 			kind: TsAST.SyntaxKind[node.kind],
 			parentKind: node.parent ? TsAST.SyntaxKind[node.parent.kind] : undefined,
-			text: node.getText(),
+			// Un nœud synthétisé (type donné par le checker) n'a pas de texte source.
+			text: DCommon.pipe(
+				DEither.safeCallback(() => node.getText()),
+				DEither.whenIsRightOtherwise(DCommon.forward, () => TsAST.SyntaxKind[node.kind]),
+			),
 			getNode: () => node,
 			content,
 			filePath: file.currentFilePath,

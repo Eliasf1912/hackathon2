@@ -45,8 +45,10 @@ function getGroupValuesType(outputType: GoType, context: BuildContext) {
  * }()
  * ```
  *
- * Limites connues : la forme objet (`group({ a, b })`) et les éléments « getters »
- * (fonctions appelées pour obtenir l'Either).
+ * Un élément « getter » (`() => calcul()`) est appelé dans la boucle. `asyncGroup` est le
+ * même parcours séquentiel (modèle synchrone : `Promise<T>` → `T`).
+ *
+ * Limite connue : la forme objet (`group({ a, b })`).
  */
 export async function groupExpressionHandler(node: TsAST.Node, context: BuildContext) {
 	if (!TsAST.isCallExpression(node)) {
@@ -79,7 +81,7 @@ export async function groupExpressionHandler(node: TsAST.Node, context: BuildCon
 	const goGroupType = DEither.unwrapRight(groupType);
 
 	if (!DModeling.hasTagValue(goGroupType, "[node][type]slice") && !DModeling.hasTagValue(goGroupType, "[node][type]array")) {
-		return context.error(groupNode, "un-support-group-object-or-getter");
+		return context.error(groupNode, "un-support-group-object");
 	}
 
 	const outputType = await transformCheckerType(await typeChecker.getTypeAtLocation(node), node, context);
@@ -110,7 +112,32 @@ export async function groupExpressionHandler(node: TsAST.Node, context: BuildCon
 		context,
 	);
 
-	const branches = DArray.map(getVariants(element, goGroupType.elementType), (variant) => {
+	// Élément « getter » (`() => calcul()`) : appelé dans la boucle, donc seulement si les
+	// précédents ont réussi, comme DuploJS.
+	const getterType = DModeling.hasTagValue(goGroupType.elementType, "[node][type]function")
+		? goGroupType.elementType
+		: undefined;
+	const itemType = getterType ? DArray.first(getterType.returnTypes) : goGroupType.elementType;
+
+	if (!itemType) {
+		return context.error(groupNode, "un-support-group-getter-type");
+	}
+
+	const item = getterType ? context.generateIdentifier() : element;
+
+	const callGetter: readonly GoAST.Statement[] = getterType
+		? [
+			GoAST.createShortVariableDeclarationStatement({
+				identifier: item,
+				initializer: GoAST.createCallExpression({
+					callee: element,
+					arguments: [],
+				}),
+			}),
+		]
+		: [];
+
+	const branches = DArray.map(getVariants(item, itemType), (variant) => {
 		if (hasEitherVariantKind(variant.type, "right")) {
 			return DEither.right("branch", {
 				test: variant.tagTest,
@@ -213,9 +240,12 @@ export async function groupExpressionHandler(node: TsAST.Node, context: BuildCon
 							}),
 							expression: boundGroup.result,
 							body: GoAST.createBlockStatement({
-								statements: flattenChain(chainBranches(
-									DArray.map(DArray.filter(branches, DEither.isRight), DEither.unwrapRight),
-								)),
+								statements: DArray.concat(
+									callGetter,
+									flattenChain(chainBranches(
+										DArray.map(DArray.filter(branches, DEither.isRight), DEither.unwrapRight),
+									)),
+								),
 							}),
 						}),
 						GoAST.createReturnStatement({ values: [DEither.unwrapRight(success)] }),

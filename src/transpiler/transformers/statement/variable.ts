@@ -1,4 +1,5 @@
 import { TsAST } from "@typescript";
+import { NodeBuilderFlags } from "typescript/async";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import * as DArray from "@duplojs/lang/array";
@@ -22,6 +23,7 @@ async function transformVariableType(declaration: TsAST.VariableDeclaration, con
 			await typeChecker.getTypeAtLocation(declaration.name),
 		),
 		declaration,
+		NodeBuilderFlags.NoTruncation,
 	);
 
 	if (!typeNode) {
