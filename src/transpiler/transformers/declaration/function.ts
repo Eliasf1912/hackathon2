@@ -4,7 +4,6 @@ import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import * as DCommon from "@duplojs/lang/common";
 import * as DArray from "@duplojs/lang/array";
-import { typeTransformers } from "../type";
 import * as DEither from "@duplojs/lang/either";
 import { blockStatementTransformer } from "../statement/block";
 
@@ -15,32 +14,34 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 		}
 
 		const functionIdentifier = context.createSourceIdentifier(node.name.text);
+		const { typeChecker } = context.transpilation;
 
+		// Types written in the source and inferred types both come from the checker.
 		const functionArguments = await DCommon.asyncPipe(
 			node.parameters,
 			DArray.map(
-				(parameters) => DCommon.asyncPipe(
-					context.transform(
-						parameters.type ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword),
-						typeTransformers.value,
-					),
-					DEither.whenIsRight(
-						({ before, result }) => {
-							if (!DArray.lengthEqual(before, 0)) {
-								return context.error(parameters, "un-support-before-on-parameter");
-							}
+				async(parameter) => {
+					if (!TsAST.isIdentifier(parameter.name)) {
+						return context.error(parameter, "params-name-is-not-identifier");
+					}
 
-							if (!TsAST.isIdentifier(parameters.name)) {
-								return context.error(parameters, "params-name-is-not-identifier");
-							}
+					const parameterType = await useGoType(
+						parameter.type
+							? await typeChecker.getTypeFromTypeNode(parameter.type)
+							: await typeChecker.getTypeAtLocation(parameter.name),
+						parameter,
+						context,
+					);
 
-							return GoAST.createFunctionArgument({
-								identifier: context.createSourceIdentifier(parameters.name.text),
-								type: result,
-							});
-						},
-					),
-				),
+					if (DEither.isLeft(parameterType)) {
+						return parameterType;
+					}
+
+					return GoAST.createFunctionArgument({
+						identifier: context.createSourceIdentifier(parameter.name.text),
+						type: parameterType,
+					});
+				},
 			),
 			DCommon.promiseAll,
 			DArray.reduce(
@@ -64,29 +65,15 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 			return functionArguments;
 		}
 
-		const signature = await context.transpilation.typeChecker.getSignatureFromDeclaration(node);
-
-		// A return type written in the source is a type node; an inferred one comes from the checker.
-		const annotatedReturnType = node.type && await DCommon.asyncPipe(
-			context.transform(node.type, typeTransformers.value),
-			DEither.unwrapRight,
+		const returnType = await useGoType(
+			node.type
+				? await typeChecker.getTypeFromTypeNode(node.type)
+				: await typeChecker.getReturnTypeOfSignature(
+					await typeChecker.getSignatureFromDeclaration(node),
+				),
+			node,
+			context,
 		);
-
-		if (annotatedReturnType && DEither.isLeft(annotatedReturnType)) {
-			return annotatedReturnType;
-		}
-
-		if (annotatedReturnType && !DArray.lengthEqual(annotatedReturnType.before, 0)) {
-			return context.error(node, "un-support-before-on-return-type");
-		}
-
-		const returnType = annotatedReturnType
-			? annotatedReturnType.result
-			: await useGoType(
-				await context.transpilation.typeChecker.getReturnTypeOfSignature(signature),
-				node,
-				context,
-			);
 
 		if (DEither.isLeft(returnType)) {
 			return returnType;

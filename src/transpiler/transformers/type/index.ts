@@ -14,7 +14,6 @@ import { stringTypeTransformer } from "./string";
 import { booleanTypeTransformer } from "./boolean";
 import { literalTypeTransformer } from "./literal";
 import { anyTypeTransformer } from "./any";
-import { promiseTypeTransformer } from "./promise";
 import { functionTypeTransformer } from "./function";
 
 export const typeTransformers = DCommon.memo(
@@ -32,7 +31,6 @@ export const typeTransformers = DCommon.memo(
 		booleanTypeTransformer,
 		literalTypeTransformer,
 		anyTypeTransformer,
-		promiseTypeTransformer,
 		functionTypeTransformer,
 	],
 );

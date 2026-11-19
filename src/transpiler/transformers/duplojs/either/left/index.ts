@@ -7,43 +7,7 @@ import * as DEither from "@duplojs/lang/either";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
 import { useGoType } from "../../../../resolveGoType";
-import { typeTransformers } from "../../../type";
-import { eitherLeftDependency, eitherLeftTypeDependency, leftFunctionIdentifier, leftTypeIdentifier } from "./sharedDependency";
-
-/**
- * `DEither.Left<information, value>` becomes `EitherLeft[value]`: the
- * information is stored in the struct field at runtime.
- */
-export async function leftTypeHandler(
-	node: TsAST.TypeReferenceNode | TsAST.ImportTypeNode,
-	context: BuildContext,
-) {
-	const valueNode = node.typeArguments && DArray.at(node.typeArguments, 1);
-
-	if (!valueNode) {
-		return context.notSupport();
-	}
-
-	const valueType = await DCommon.asyncPipe(
-		context.transform(valueNode, typeTransformers.value),
-		DEither.unwrapRight,
-	);
-
-	if (DEither.isLeft(valueType)) {
-		return valueType;
-	}
-
-	return context.success({
-		before: valueType.before,
-		result: GoAST.createGenericTypeReference({
-			typeReference: GoAST.createPackageTypeReference({
-				packageName: context.registerSharedDependency(eitherLeftTypeDependency.value),
-				identifier: leftTypeIdentifier,
-			}),
-			typeArguments: DCommon.cast([valueType.result]),
-		}),
-	});
-}
+import { eitherLeftDependency, eitherLeftTypeDependency, leftFunctionIdentifier } from "./sharedDependency";
 
 export async function leftExpressionHandler(
 	node: TsAST.Node,

@@ -3,7 +3,7 @@ import { GoAST } from "@go";
 import { TsAST } from "@typescript";
 import { type BuildContext } from "../../../../context/build";
 import { callExpressionTransformer } from "../../../shared";
-import { eitherFailDependency, eitherFailTypeDependency, failFunctionIdentifier, failTypeIdentifier } from "./sharedDependency";
+import { eitherFailDependency, eitherFailTypeDependency, failFunctionIdentifier } from "./sharedDependency";
 
 export async function failExpressionHandler(
 	node: TsAST.Node,
@@ -20,21 +20,6 @@ export async function failExpressionHandler(
 		result: GoAST.createSelectorExpression({
 			target: packageName,
 			identifier: failFunctionIdentifier,
-		}),
-	});
-}
-
-/**
- * The type alone does not need the `EitherFailOf` constructor.
- */
-export function failTypeHandler(
-	_node: TsAST.TypeReferenceNode | TsAST.ImportTypeNode,
-	context: BuildContext,
-) {
-	return context.success({
-		result: GoAST.createPackageTypeReference({
-			packageName: context.registerSharedDependency(eitherFailTypeDependency.value),
-			identifier: failTypeIdentifier,
 		}),
 	});
 }
