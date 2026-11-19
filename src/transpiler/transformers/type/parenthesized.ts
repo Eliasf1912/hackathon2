@@ -1,8 +1,11 @@
+import type { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
-import { GoAST } from "@go";
 import { typeTransformers } from ".";
 
+/**
+ * `( T )` : les parenthèses ne servent qu'à la lecture, on traduit `T`.
+ */
 export const parenthesizedTypeTransformer: Transformer<GoAST.Type | GoAST.TypeReference> = createTransformer(
 	(node, context) => {
 		if (!TsAST.isParenthesizedTypeNode(node)) {

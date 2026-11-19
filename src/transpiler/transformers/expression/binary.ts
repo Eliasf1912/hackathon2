@@ -5,6 +5,10 @@ import { expressionTransformers } from ".";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import * as DArray from "@duplojs/lang/array";
+import { type BuildContext } from "../../context/build";
+import { createToStringExpression } from "../duplojs/string/to";
+import { importStandardPackage } from "../shared";
+import { getUnionType, goTypeKey, transformCheckerType } from "../type/union";
 
 const binaryOperators: Partial<
 	Record<TsAST.SyntaxKind, GoAST.BinaryOperator>
@@ -14,12 +18,6 @@ const binaryOperators: Partial<
 	[TsAST.SyntaxKind.AsteriskToken]: "*",
 	[TsAST.SyntaxKind.SlashToken]: "/",
 	[TsAST.SyntaxKind.PercentToken]: "%",
-
-	[TsAST.SyntaxKind.AmpersandToken]: "&",
-	[TsAST.SyntaxKind.BarToken]: "|",
-	[TsAST.SyntaxKind.CaretToken]: "^",
-	[TsAST.SyntaxKind.LessThanLessThanToken]: "<<",
-	[TsAST.SyntaxKind.GreaterThanGreaterThanToken]: ">>",
 
 	[TsAST.SyntaxKind.AmpersandAmpersandToken]: "&&",
 	[TsAST.SyntaxKind.BarBarToken]: "||",
@@ -32,13 +30,252 @@ const binaryOperators: Partial<
 	[TsAST.SyntaxKind.GreaterThanEqualsToken]: ">=",
 };
 
-export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression> = createTransformer(
+/**
+ * Opérateurs sur les bits : JS convertit les nombres en entiers 32 bits, Go les refuse
+ * sur des `float64`. Pas encore traduits : erreur nommée.
+ */
+const bitwiseOperators: ReadonlySet<TsAST.SyntaxKind> = new Set([
+	TsAST.SyntaxKind.AmpersandToken,
+	TsAST.SyntaxKind.BarToken,
+	TsAST.SyntaxKind.CaretToken,
+	TsAST.SyntaxKind.LessThanLessThanToken,
+	TsAST.SyntaxKind.GreaterThanGreaterThanToken,
+	TsAST.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
+
+/**
+ * `&&` et `||` court-circuitent : l'opérande droit n'est évalué que si l'opérande gauche
+ * ne suffit pas à décider. Ses calculs préalables (`before`) ne peuvent donc pas être
+ * placés avant l'opération : ils vont dans une branche Go conditionnelle.
+ *
+ * Sans calcul préalable, l'opérande droit reste dans l'expression Go, qui court-circuite
+ * elle aussi.
+ */
+interface LogicalExpressionParams {
+	node: TsAST.BinaryExpression;
+	operator: "&&" | "||";
+	leftBefore: readonly GoAST.Statement[];
+	leftAssignment: GoAST.ShortVariableDeclarationStatement;
+}
+
+async function logicalExpressionHandler(
+	{ node, operator, leftBefore, leftAssignment }: LogicalExpressionParams,
+	context: BuildContext,
+): Promise<ReturnType<Transformer<GoAST.BinaryExpression | GoAST.Identifier>["transformer"]>> {
+	const right = await DCommon.asyncPipe(
+		context.transform(node.right, expressionTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(right)) {
+		return right;
+	}
+
+	if (DArray.lengthEqual(right.before, 0)) {
+		return context.success({
+			before: DArray.concat(leftBefore, [leftAssignment]),
+			result: GoAST.createBinaryExpression({
+				operator,
+				left: leftAssignment.identifier,
+				right: right.result,
+			}),
+		});
+	}
+
+	// Le résultat vaut l'opérande gauche, sauf si l'opérande droit doit être évalué.
+	const resultDeclaration = GoAST.createShortVariableDeclarationStatement({
+		identifier: context.generateIdentifier(),
+		initializer: leftAssignment.identifier,
+	});
+
+	// && : évaluer la droite seulement si la gauche est vraie.
+	// || : évaluer la droite seulement si la gauche est fausse.
+	const condition = operator === "&&"
+		? leftAssignment.identifier
+		: GoAST.createUnaryExpression({
+			operator: "!",
+			operand: leftAssignment.identifier,
+		});
+
+	const rightBranch = GoAST.createIfStatement({
+		condition,
+		body: GoAST.createBlockStatement({
+			statements: DArray.concat(
+				right.before,
+				[
+					GoAST.createAssignmentStatement({
+						targets: DCommon.cast([resultDeclaration.identifier]),
+						values: DCommon.cast([right.result]),
+					}),
+				],
+			),
+		}),
+	});
+
+	return context.success({
+		before: DArray.concat(
+			leftBefore,
+			[leftAssignment, resultDeclaration, rightBranch],
+		),
+		result: resultDeclaration.identifier,
+	});
+}
+
+/**
+ * Opérandes d'une concaténation qui mélange une chaîne et un autre type : l'autre opérande
+ * est converti comme JS le fait (`DString.to`). `undefined` si ce n'est pas le cas.
+ */
+async function createConcatenation(
+	params: {
+		node: TsAST.BinaryExpression;
+		left: GoAST.Identifier;
+		right: GoAST.Identifier;
+	},
+	context: BuildContext,
+) {
+	const { typeChecker } = context.transpilation;
+	const types = await Promise.all([
+		transformCheckerType(await typeChecker.getTypeAtLocation(params.node.left), params.node.left, context),
+		transformCheckerType(await typeChecker.getTypeAtLocation(params.node.right), params.node.right, context),
+	]);
+	const [leftType, rightType] = types;
+	const failed = DArray.find(types, DEither.isLeft);
+
+	if (failed) {
+		return failed;
+	}
+
+	if (!leftType || !rightType || DEither.isLeft(leftType) || DEither.isLeft(rightType)) {
+		return DEither.right("concatenation", undefined);
+	}
+
+	const stringKey = goTypeKey(GoAST.builtinTypeReferences.string);
+	const isLeftString = goTypeKey(DEither.unwrapRight(leftType)) === stringKey;
+	const isRightString = goTypeKey(DEither.unwrapRight(rightType)) === stringKey;
+
+	if (isLeftString === isRightString) {
+		return DEither.right("concatenation", undefined);
+	}
+
+	const left = isLeftString
+		? params.left
+		: createToStringExpression(params.left, DEither.unwrapRight(leftType), context);
+	const right = isRightString
+		? params.right
+		: createToStringExpression(params.right, DEither.unwrapRight(rightType), context);
+
+	if (!left || !right) {
+		return context.error(params.node, "un-support-concatenation-type");
+	}
+
+	return DEither.right("concatenation", {
+		left,
+		right,
+	});
+}
+
+function getNullishKind(node: TsAST.Expression) {
+	if (node.kind === TsAST.SyntaxKind.NullKeyword) {
+		return "JSNull";
+	}
+
+	return TsAST.isIdentifier(node) && node.text === "undefined" ? "JSUndefined" : undefined;
+}
+
+/**
+ * `x === undefined`, `x !== null`… : Go ne compare pas une union à `JSUndefined`. Sur une
+ * union, c'est un test de la variante (`x.Tag == 0`) ; sinon le type dit déjà la réponse
+ * (`x` est évalué, puis une constante). `===` ne confond pas `undefined` et `null`.
+ */
+async function createNullishComparison(node: TsAST.BinaryExpression, context: BuildContext) {
+	const kind = node.operatorToken.kind;
+
+	if (kind !== TsAST.SyntaxKind.EqualsEqualsEqualsToken && kind !== TsAST.SyntaxKind.ExclamationEqualsEqualsToken) {
+		return undefined;
+	}
+
+	const nullish = getNullishKind(node.right) ?? getNullishKind(node.left);
+	const valueNode = getNullishKind(node.right) ? node.left : node.right;
+
+	if (!nullish || getNullishKind(valueNode)) {
+		return undefined;
+	}
+
+	const valueType = await transformCheckerType(
+		await context.transpilation.typeChecker.getTypeAtLocation(valueNode),
+		valueNode,
+		context,
+	);
+
+	if (DEither.isLeft(valueType)) {
+		return valueType;
+	}
+
+	const value = await DCommon.asyncPipe(
+		context.transform(valueNode, expressionTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(value)) {
+		return value;
+	}
+
+	const isEqual = kind === TsAST.SyntaxKind.EqualsEqualsEqualsToken;
+	const union = getUnionType(DEither.unwrapRight(valueType));
+	const index = union
+		? union.typeArguments.findIndex((member) => goTypeKey(member).endsWith(`.${nullish}`))
+		: -1;
+
+	if (union && index !== -1) {
+		return context.success({
+			before: value.before,
+			result: GoAST.createBinaryExpression({
+				operator: isEqual ? "==" : "!=",
+				left: GoAST.createSelectorExpression({
+					target: value.result,
+					identifier: GoAST.createIdentifier("Tag"),
+				}),
+				right: GoAST.createIntegerLiteral({ value: BigInt(index) }),
+			}),
+		});
+	}
+
+	const isAlwaysNullish = goTypeKey(DEither.unwrapRight(valueType)).endsWith(`.${nullish}`);
+
+	return context.success({
+		before: DArray.concat(
+			value.before,
+			[
+				GoAST.createAssignmentStatement({
+					targets: DCommon.cast([GoAST.createIdentifier("_")]),
+					values: DCommon.cast([value.result]),
+				}),
+			],
+		),
+		result: GoAST.createBooleanLiteral({ value: isAlwaysNullish === isEqual }),
+	});
+}
+
+export const binaryExpressionTransformer: Transformer<
+	GoAST.BinaryExpression | GoAST.Identifier | GoAST.CallExpression | GoAST.BooleanLiteral
+> = createTransformer(
 	async(node, context) => {
 		if (!TsAST.isBinaryExpression(node)) {
 			return context.notSupport();
 		}
 
-		const operator = binaryOperators[node.operatorToken.kind];
+		const nullishComparison = await createNullishComparison(node, context);
+
+		if (nullishComparison) {
+			return nullishComparison;
+		}
+
+		if (bitwiseOperators.has(node.operatorToken.kind)) {
+			return context.error(node, "un-support-bitwise-operator");
+		}
+
+		const isPower = node.operatorToken.kind === TsAST.SyntaxKind.AsteriskAsteriskToken;
+		const operator = isPower ? "*" : binaryOperators[node.operatorToken.kind];
 
 		if (!operator) {
 			return context.notSupport();
@@ -58,6 +295,18 @@ export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression> = 
 			initializer: left.result,
 		});
 
+		if (operator === "&&" || operator === "||") {
+			return logicalExpressionHandler(
+				{
+					node,
+					operator,
+					leftBefore: left.before,
+					leftAssignment,
+				},
+				context,
+			);
+		}
+
 		const right = await DCommon.asyncPipe(
 			context.transform(node.right, expressionTransformers.value),
 			DEither.unwrapRight,
@@ -72,13 +321,59 @@ export const binaryExpressionTransformer: Transformer<GoAST.BinaryExpression> = 
 			initializer: right.result,
 		});
 
+		const before = DArray.concat(
+			left.before,
+			[leftAssignment],
+			right.before,
+			[rightAssignment],
+		);
+
+		// Go n'a ni `%` sur les flottants ni `**` : `math.Mod` (signe du dividende, comme JS)
+		// et `math.Pow`.
+		if (operator === "%" || isPower) {
+			return context.success({
+				before,
+				result: GoAST.createCallExpression({
+					callee: GoAST.createSelectorExpression({
+						target: importStandardPackage("math", context),
+						identifier: GoAST.createIdentifier(isPower ? "Pow" : "Mod"),
+					}),
+					arguments: [leftAssignment.identifier, rightAssignment.identifier],
+				}),
+			});
+		}
+
+		// `"a" + 1` : JS convertit l'autre opérande en texte ; Go refuse les types mélangés.
+		if (operator === "+") {
+			const concatenation = await createConcatenation(
+				{
+					node,
+					left: leftAssignment.identifier,
+					right: rightAssignment.identifier,
+				},
+				context,
+			);
+
+			if (DEither.isLeft(concatenation)) {
+				return concatenation;
+			}
+
+			const operands = DEither.unwrapRight(concatenation);
+
+			if (operands) {
+				return context.success({
+					before,
+					result: GoAST.createBinaryExpression({
+						operator,
+						left: operands.left,
+						right: operands.right,
+					}),
+				});
+			}
+		}
+
 		return context.success({
-			before: DArray.concat(
-				left.before,
-				[leftAssignment],
-				right.before,
-				[rightAssignment],
-			),
+			before,
 			result: GoAST.createBinaryExpression({
 				operator,
 				right: rightAssignment.identifier,
