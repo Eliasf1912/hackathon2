@@ -1,7 +1,7 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
-import { declareEitherVariant, informationFieldIdentifier } from "../sharedDependency";
+import { declareEitherVariant, informationFieldIdentifier, valueFieldIdentifier } from "../sharedDependency";
 
 export const failTypeIdentifier = GoAST.createIdentifier("EitherFail");
 export const failFunctionIdentifier = GoAST.createIdentifier("EitherFailOf");
@@ -40,6 +40,13 @@ export const eitherFailDependency = DCommon.memo(() => {
 							identifier: informationFieldIdentifier,
 							typeReference: GoAST.builtinTypeReferences.string,
 							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/information\"",
+						}),
+						// `fail()` garde la clé `value` à `undefined` (affichée par Node) :
+						// `JSUndefined` + `omitzero` l'omet du JSON, comme `JSON.stringify`.
+						GoAST.createStructField({
+							identifier: valueFieldIdentifier,
+							typeReference: GoAST.createIdentifier("JSUndefined"),
+							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/value,omitzero\"",
 						}),
 						GoAST.createStructField({
 							identifier: GoAST.createIdentifier("Fail"),

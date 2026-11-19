@@ -93,15 +93,15 @@ export function createEitherVariantDependency(definition: EitherVariantDefinitio
 					tag: `json:"${kindTagPrefix}/information"`,
 				}),
 			],
-			hasValue
-				? [
-					GoAST.createStructField({
-						identifier: valueFieldIdentifier,
-						typeReference: generic,
-						tag: `json:"${kindTagPrefix}/value"`,
-					}),
-				]
-				: [],
+			[
+				// Sans valeur, DuploJS garde la clé `value` à `undefined` (affichée par Node) :
+				// `JSUndefined` + `omitzero` l'omet du JSON, comme `JSON.stringify`.
+				GoAST.createStructField({
+					identifier: valueFieldIdentifier,
+					typeReference: hasValue ? generic : GoAST.createIdentifier("JSUndefined"),
+					tag: `json:"${kindTagPrefix}/value${hasValue ? "" : ",omitzero"}"`,
+				}),
+			],
 			extraIdentifier && definition.extraKind
 				? [
 					GoAST.createStructField({
