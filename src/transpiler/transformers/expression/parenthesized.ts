@@ -1,10 +1,13 @@
-import type { GoAST } from "@go";
+import { type GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import { TsAST } from "@typescript";
 import { expressionTransformers } from ".";
 
+/**
+ * `(x)` → `x` : l'arbre Go garde déjà l'ordre des opérations.
+ */
 export const parenthesizedExpressionTransformer: Transformer<GoAST.Expression> = createTransformer(
-	async(node, context) => {
+	(node, context) => {
 		if (!TsAST.isParenthesizedExpression(node)) {
 			return context.notSupport();
 		}

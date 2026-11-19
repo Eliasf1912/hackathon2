@@ -4,36 +4,48 @@ import type { GoAST } from "@go";
 import { duploJSTypeTransformers } from "../duplojs";
 import { sharedTypeTransformers } from "../shared";
 import { float64TypeTransformer } from "./float";
+import { boolTypeTransformer } from "./boolean";
 import { parenthesizedTypeTransformer } from "./parenthesized";
+import { literalTypeTransformer } from "./literal";
 import { unionTypeTransformer } from "./union";
-import { anyTypeTransformer } from "./any";
-import { promiseTypeTransformer } from "./promise";
+import { arrayTypeTransformer, readonlyTypeTransformer } from "./array";
 import { stringTypeTransformer } from "./string";
-import { booleanTypeTransformer } from "./boolean";
-import { arrayTypeTransformer } from "./array";
-
-export {
-	float64TypeTransformer,
-	parenthesizedTypeTransformer,
-	unionTypeTransformer,
-	anyTypeTransformer,
-	promiseTypeTransformer,
-	stringTypeTransformer,
-	booleanTypeTransformer,
-	arrayTypeTransformer,
-};
+import { intersectionTypeTransformer } from "./intersection";
+import { nullishTypeTransformer } from "./nullish";
+import { promiseTypeTransformer } from "./promise";
+import { neverTypeTransformer } from "./never";
+import { functionTypeTransformer } from "./function";
+import {
+	declaredTypeTransformer,
+	objectLiteralTypeTransformer,
+	recordTypeTransformer,
+	typeParameterTransformer,
+	readonlyUtilityTypeTransformer,
+	computedUtilityTypeTransformer,
+} from "./object";
 
 export const typeTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Type | GoAST.TypeReference>[] => [
-		parenthesizedTypeTransformer,
-		promiseTypeTransformer,
-		arrayTypeTransformer,
 		...duploJSTypeTransformers.value,
 		...sharedTypeTransformers.value,
 		float64TypeTransformer,
-		stringTypeTransformer,
-		booleanTypeTransformer,
+		boolTypeTransformer,
+		parenthesizedTypeTransformer,
+		nullishTypeTransformer,
+		literalTypeTransformer,
 		unionTypeTransformer,
-		anyTypeTransformer,
+		readonlyTypeTransformer,
+		arrayTypeTransformer,
+		stringTypeTransformer,
+		intersectionTypeTransformer,
+		promiseTypeTransformer,
+		neverTypeTransformer,
+		functionTypeTransformer,
+		objectLiteralTypeTransformer,
+		recordTypeTransformer,
+		readonlyUtilityTypeTransformer,
+		computedUtilityTypeTransformer,
+		declaredTypeTransformer,
+		typeParameterTransformer,
 	],
 );

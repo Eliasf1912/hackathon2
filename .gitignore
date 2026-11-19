@@ -1,5 +1,11 @@
 node_modules
 dist
+tests
+_bmad-output/
+.agent/
+.agents/
+_bmad/
+.claude/
 *.m4a
 *.mp3
 *.wav

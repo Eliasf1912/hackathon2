@@ -1,9 +1,16 @@
 import * as DCommon from "@duplojs/lang/common";
 import { GoAST } from "@go";
 import { createSharedDependency } from "@transformer";
+import { declareEitherVariant, informationFieldIdentifier, valueFieldIdentifier } from "../sharedDependency";
 
 export const successFunctionIdentifier = GoAST.createIdentifier("EitherSuccessOf");
 export const successTypeIdentifier = GoAST.createIdentifier("EitherSuccess");
+
+declareEitherVariant(successTypeIdentifier, {
+	kinds: ["right", "success"],
+	information: "success",
+	hasValue: true,
+});
 
 export const eitherSuccessDependency = DCommon.memo(() => {
 	const generic = GoAST.createIdentifier("T");
@@ -28,7 +35,8 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 		imports: [],
 		init: [],
 		declarations: [
-			GoAST.createTypeAlias({
+			// Définition de type (et non alias) : Go n'accepte pas de méthodes sur un alias générique.
+			GoAST.createTypeDefinition({
 				identifier: successTypeIdentifier,
 				generic: [successTypeParameter],
 				type: GoAST.createStructType({
@@ -39,12 +47,12 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/right\"",
 						}),
 						GoAST.createStructField({
-							identifier: GoAST.createIdentifier("Information"),
+							identifier: informationFieldIdentifier,
 							typeReference: GoAST.builtinTypeReferences.string,
 							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/information\"",
 						}),
 						GoAST.createStructField({
-							identifier: GoAST.createIdentifier("Value"),
+							identifier: valueFieldIdentifier,
 							typeReference: generic,
 							tag: "json:\"@duplojs/lang/kind/@DuplojsLangEither/value\"",
 						}),
@@ -78,11 +86,11 @@ export const eitherSuccessDependency = DCommon.memo(() => {
 											value: nullLiteral,
 										}),
 										GoAST.createKeyedElement({
-											key: GoAST.createIdentifier("Information"),
+											key: informationFieldIdentifier,
 											value: GoAST.createStringLiteral({ value: "success" }),
 										}),
 										GoAST.createKeyedElement({
-											key: GoAST.createIdentifier("Value"),
+											key: valueFieldIdentifier,
 											value: GoAST.createIdentifier("value"),
 										}),
 										GoAST.createKeyedElement({

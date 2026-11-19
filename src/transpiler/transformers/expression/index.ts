@@ -6,54 +6,44 @@ import { identifierTransformer } from "../common";
 import { numericLiteralTransformer } from "./numericLiteral";
 import { sharedExpressionTransformers } from "../shared";
 import { binaryExpressionTransformer } from "./binary";
-import { prefixUnaryExpressionTransformer } from "./prefixUnary";
-import { arrayLiteralTransformer } from "./arrayLiteral";
-import { arrowFunctionTransformer } from "./arrowFunction";
-import { stringLiteralTransformer } from "./stringLiteral";
-import { objectLiteralTransformer } from "./objectLiteral";
+import { prefixUnaryExpressionTransformer } from "./unary";
+import { booleanLiteralTransformer, stringLiteralTransformer } from "./literal";
+import { arrayLiteralTransformer } from "./array";
+import { functionExpressionTransformer } from "./function";
 import { conditionalExpressionTransformer } from "./conditional";
+import { nullishLiteralTransformer } from "./nullish";
+import { templateExpressionTransformer } from "./template";
 import { awaitExpressionTransformer } from "./await";
-import { booleanLiteralTransformer } from "./booleanLiteral";
 import { parenthesizedExpressionTransformer } from "./parenthesized";
-import { asExpressionTransformer } from "./as";
-import { propertyAccessExpressionTransformer } from "./propertyAccess";
-import { templateLiteralTransformer } from "./templateLiteral";
-
-export {
-	numericLiteralTransformer,
-	binaryExpressionTransformer,
-	prefixUnaryExpressionTransformer,
-	arrayLiteralTransformer,
-	arrowFunctionTransformer,
-	stringLiteralTransformer,
-	objectLiteralTransformer,
-	conditionalExpressionTransformer,
-	awaitExpressionTransformer,
-	booleanLiteralTransformer,
-	parenthesizedExpressionTransformer,
-	asExpressionTransformer,
-	propertyAccessExpressionTransformer,
-	templateLiteralTransformer,
-};
+import { regularExpressionTransformer } from "./regularExpression";
+import { objectLiteralTransformer } from "./object";
+import { builtinCallTransformer } from "./builtin";
+import { propertyAccessTransformer } from "./propertyAccess";
+import { elementAccessTransformer } from "./elementAccess";
+import { nullishCoalescingTransformer } from "./nullishCoalescing";
 
 export const expressionTransformers = DCommon.memo(
 	(): readonly Transformer<GoAST.Expression>[] => [
-		arrowFunctionTransformer,
-		awaitExpressionTransformer,
-		parenthesizedExpressionTransformer,
-		asExpressionTransformer,
 		...duploJSExpressionTransformers.value,
+		builtinCallTransformer,
 		...sharedExpressionTransformers.value,
+		nullishLiteralTransformer,
 		identifierTransformer,
 		numericLiteralTransformer,
 		stringLiteralTransformer,
-		templateLiteralTransformer,
 		booleanLiteralTransformer,
 		binaryExpressionTransformer,
 		prefixUnaryExpressionTransformer,
 		arrayLiteralTransformer,
-		objectLiteralTransformer,
-		propertyAccessExpressionTransformer,
+		functionExpressionTransformer,
 		conditionalExpressionTransformer,
+		templateExpressionTransformer,
+		awaitExpressionTransformer,
+		parenthesizedExpressionTransformer,
+		regularExpressionTransformer,
+		objectLiteralTransformer,
+		propertyAccessTransformer,
+		elementAccessTransformer,
+		nullishCoalescingTransformer,
 	],
 );

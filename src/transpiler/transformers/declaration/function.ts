@@ -1,4 +1,5 @@
 import { TsAST } from "@typescript";
+import { NodeBuilderFlags } from "typescript/async";
 import { GoAST } from "@go";
 import { createTransformer, type Transformer } from "@transformer";
 import * as DCommon from "@duplojs/lang/common";
@@ -6,6 +7,47 @@ import * as DArray from "@duplojs/lang/array";
 import { typeTransformers } from "../type";
 import * as DEither from "@duplojs/lang/either";
 import { blockStatementTransformer } from "../statement/block";
+import { terminateBody, transformParameter } from "../expression/function";
+import { type BuildContext } from "../../context/build";
+
+/**
+ * Type Go de retour d'une fonction : l'annotation si elle existe, sinon le type déduit
+ * par le checker. Partagé avec `return`, qui convertit la valeur renvoyée vers ce type.
+ */
+export async function transformFunctionReturnType(
+	node: TsAST.SignatureDeclaration,
+	context: BuildContext,
+) {
+	const { typeChecker } = context.transpilation;
+
+	const returnTypeNode = node.type ?? await typeChecker.typeToTypeNode(
+		await typeChecker.getReturnTypeOfSignature(
+			await typeChecker.getSignatureFromDeclaration(node),
+		),
+		node,
+		NodeBuilderFlags.NoTruncation,
+	) ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword);
+
+	// `void` : une fonction Go sans valeur de retour.
+	if (returnTypeNode.kind === TsAST.SyntaxKind.VoidKeyword) {
+		return DEither.success(undefined);
+	}
+
+	const returnType = await DCommon.asyncPipe(
+		context.transform(returnTypeNode, typeTransformers.value),
+		DEither.unwrapRight,
+	);
+
+	if (DEither.isLeft(returnType)) {
+		return returnType;
+	}
+
+	if (!DArray.lengthEqual(returnType.before, 0)) {
+		return context.error(returnTypeNode, "un-support-before-on-return-type");
+	}
+
+	return DEither.success(returnType.result);
+}
 
 export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclaration> = createTransformer(
 	async(node, context) => {
@@ -15,78 +57,24 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 
 		const functionIdentifier = context.createSourceIdentifier(node.name.text);
 
-		const functionArguments = await DCommon.asyncPipe(
+		const parameters = await DCommon.asyncPipe(
 			node.parameters,
-			DArray.map(
-				(parameters) => DCommon.asyncPipe(
-					context.transform(
-						parameters.type ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword),
-						typeTransformers.value,
-					),
-					DEither.whenIsRight(
-						({ before, result }) => {
-							if (!DArray.lengthEqual(before, 0)) {
-								return context.error(parameters, "un-support-before-on-parameter");
-							}
-
-							if (!TsAST.isIdentifier(parameters.name)) {
-								return context.error(parameters, "params-name-is-not-identifier");
-							}
-
-							return GoAST.createFunctionArgument({
-								identifier: context.createSourceIdentifier(parameters.name.text),
-								type: result,
-							});
-						},
-					),
-				),
-			),
+			DArray.map((parameter) => transformParameter(parameter, context)),
 			DCommon.promiseAll,
-			DArray.reduce(
-				DArray.reduceFrom<readonly GoAST.FunctionArgument[]>([]),
-				({ element, lastValue, next, exit }) => {
-					if (DEither.isLeft(element)) {
-						return exit(element);
-					}
-
-					return next(
-						DArray.push(
-							lastValue,
-							element,
-						),
-					);
-				},
-			),
 		);
 
-		if (DEither.isLeft(functionArguments)) {
-			return functionArguments;
+		const failedParameter = DArray.find(parameters, DEither.isLeft);
+
+		if (failedParameter) {
+			return failedParameter;
 		}
 
-		const signature = await context.transpilation.typeChecker.getSignatureFromDeclaration(node);
+		const transformedParameters = DArray.map(DArray.filter(parameters, DEither.isRight), DEither.unwrapRight);
 
-		const returnTypeNode = node.type ?? await context.transpilation.typeChecker.typeToTypeNode(
-			await context.transpilation.typeChecker.getReturnTypeOfSignature(signature),
-			node,
-		) ?? TsAST.factory.createKeywordTypeNode(TsAST.SyntaxKind.AnyKeyword);
+		const returnType = await transformFunctionReturnType(node, context);
 
-		let returnTypes: readonly GoAST.FunctionDeclarationReturnType[] = [];
-
-		if (returnTypeNode.kind !== TsAST.SyntaxKind.VoidKeyword) {
-			const returnType = await DCommon.asyncPipe(
-				context.transform(returnTypeNode, typeTransformers.value),
-				DEither.unwrapRight,
-			);
-
-			if (DEither.isLeft(returnType)) {
-				return returnType;
-			}
-
-			if (!DArray.lengthEqual(returnType.before, 0)) {
-				return context.error(returnTypeNode, "un-support-before-on-return-type");
-			}
-
-			returnTypes = [returnType.result];
+		if (DEither.isLeft(returnType)) {
+			return returnType;
 		}
 
 		const body = await DCommon.asyncPipe(
@@ -99,16 +87,29 @@ export const functionDeclarationTransformer: Transformer<GoAST.FunctionDeclarati
 		}
 
 		if (!DArray.lengthEqual(body.before, 0)) {
-			return context.error(returnTypeNode, "un-support-before-on-block-statement");
+			return context.error(node, "un-support-before-on-block-statement");
 		}
 
 		return context.success({
 			result: GoAST.createFunctionDeclaration({
 				identifier: functionIdentifier,
-				arguments: functionArguments,
-				returnTypes,
-				body: body.result,
-				generic: [],
+				arguments: DArray.map(transformedParameters, ({ argument }) => argument),
+				returnTypes: DCommon.pipe(DEither.unwrapRight(returnType), (type) => (type ? [type] : [])),
+				// Paramètres déstructurés (`({ a, b }) =>`) : liés au début du corps.
+				body: GoAST.createBlockStatement({
+					statements: terminateBody(
+						DArray.concat(
+							DArray.flatMap(transformedParameters, ({ bindings }) => bindings),
+							body.result.statements,
+						),
+						DEither.unwrapRight(returnType),
+					),
+				}),
+				// `function ok<GenericBody>(…)` → `func ok[GenericBody any](…)`.
+				generic: DArray.map(node.typeParameters ?? [], ({ name }) => GoAST.createTypeParameter({
+					identifier: context.createSourceIdentifier(name.text),
+					constraint: GoAST.builtinTypeReferences.any,
+				})),
 			}),
 		});
 	},

@@ -13,6 +13,10 @@
     "build:08": "pnpm build --tsconfig projects/08/tsconfig.json --input projects/08/index.ts --output projects/08/dist",
     "build:09": "pnpm build --tsconfig projects/09/tsconfig.json --input projects/09/index.ts --output projects/09/dist",
     "build:10": "pnpm build --tsconfig projects/10/tsconfig.json --input projects/10/index.ts --output projects/10/dist",
+    "build:11": "pnpm build --tsconfig projects/11/tsconfig.json --input projects/11/index.ts --output projects/11/dist",
+    "build:12": "pnpm build --tsconfig projects/12/tsconfig.json --input projects/12/index.ts --output projects/12/dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:types": "./.commands/test-types.sh",
     "test:lint": "./.commands/test-lint.sh",
     "test:stress": "tsx --tsconfig tsconfig.app.json test_stress.ts"
@@ -35,6 +39,7 @@
     "@duplojs/agents-kit": "0.1.0-beta.11",
     "@duplojs/code-config": "0.1.0-beta.11",
     "@types/node": "24.19.2",
-    "tsx": "4.23.15"
+    "tsx": "4.23.15",
+    "vitest": "5.0.1"
   }
 }
