@@ -8,12 +8,9 @@ export function createSourcePackageLayout(
 	projectWorkDirectory: string & DPath.Absolute,
 	sourcePath: string & DPath.Absolute,
 ) {
-	const relativePath = DPath.computeRelative(
-		projectWorkDirectory.toLowerCase() as typeof projectWorkDirectory,
-		sourcePath.toLowerCase() as typeof sourcePath,
-	);
+	const relativePath = DPath.computeRelative(projectWorkDirectory, sourcePath);
 	const baseName = DPath.getBaseName(sourcePath);
-	const containedPath = !relativePath.startsWith("..");
+	const containedPath = DPath.resolveFrom(projectWorkDirectory, [relativePath], { stayInOrigin: true });
 
 	if (!baseName || relativePath === "." || !containedPath) {
 		return DEither.left("invalid-source-package-path", sourcePath);
