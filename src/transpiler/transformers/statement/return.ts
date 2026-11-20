@@ -4,11 +4,52 @@ import { createTransformer, type Transformer } from "@transformer";
 import * as DCommon from "@duplojs/lang/common";
 import * as DEither from "@duplojs/lang/either";
 import { expressionTransformers } from "../expression";
+import { transformFunctionReturnType } from "../declaration/function";
+import { convertExpressionToType } from "../type/union";
 
+function findEnclosingFunction(node: TsAST.Node): TsAST.FunctionLikeDeclaration | undefined {
+	const { parent } = node;
+
+	if (!parent) {
+		return undefined;
+	}
+
+	return TsAST.isFunctionLikeDeclaration(parent)
+		? parent
+		: findEnclosingFunction(parent);
+}
+
+/**
+ * `return valeur` : la valeur est convertie vers le type de retour de la fonction
+ * (un membre renvoyé là où la fonction annonce une union).
+ */
 export const returnStatementTransformer: Transformer<GoAST.ReturnStatement> = createTransformer(
 	async(node, context) => {
-		if (!TsAST.isReturnStatement(node) || !node.expression) {
+		if (!TsAST.isReturnStatement(node)) {
 			return context.notSupport();
+		}
+
+		// `return;` (fonction `void`).
+		if (!node.expression) {
+			return context.success({ result: GoAST.createReturnStatement({ values: [] }) });
+		}
+
+		const functionNode = findEnclosingFunction(node);
+
+		if (!functionNode) {
+			return context.error(node, "un-support-return-outside-function");
+		}
+
+		const returnType = await transformFunctionReturnType(functionNode, context);
+
+		if (DEither.isLeft(returnType)) {
+			return returnType;
+		}
+
+		const goReturnType = DEither.unwrapRight(returnType);
+
+		if (!goReturnType) {
+			return context.error(node, "un-support-return-value-in-void-function");
 		}
 
 		const expression = await DCommon.asyncPipe(
@@ -20,10 +61,23 @@ export const returnStatementTransformer: Transformer<GoAST.ReturnStatement> = cr
 			return expression;
 		}
 
+		const value = await convertExpressionToType(
+			{
+				node: node.expression,
+				expression: expression.result,
+				targetType: goReturnType,
+			},
+			context,
+		);
+
+		if (DEither.isLeft(value)) {
+			return value;
+		}
+
 		return context.success({
 			before: expression.before,
 			result: GoAST.createReturnStatement({
-				values: [expression.result],
+				values: [DEither.unwrapRight(value)],
 			}),
 		});
 	},
