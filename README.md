@@ -4,7 +4,7 @@
 
 | | Nom | Prénom | Classe |
 |---|---|---|---|
-| 1 | DUVERNOIS | Lytween | 5IWJ |
+| 1 | VICTOIRE | Lytween | 5IWJ |
 | 2 | GUEPPOIS | Karen | 5IWJ |
 | 3 | ZHANG | Changrui | 4IWJ |
 | 4 | DUVERNOIS | Elias | 5IWJ |
