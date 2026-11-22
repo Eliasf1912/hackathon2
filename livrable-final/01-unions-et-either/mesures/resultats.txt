@@ -1,0 +1,47 @@
+# Relance du 20/11 (go 1.24.7, 4 cœurs)
+goos: linux
+goarch: amd64
+pkg: duplojs.local/benchmarks
+cpu: Intel(R) Xeon(R) Processor @ 2.30GHz
+BenchmarkUnionN_Typed-4                    	319320147	         3.408 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUnionN_Typed-4                    	340893722	         4.214 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUnionN_Typed-4                    	291937084	         3.826 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAny_Dynamic-4                     	102812576	        12.72 ns/op	       8 B/op	       1 allocs/op
+BenchmarkAny_Dynamic-4                     	82732568	        12.09 ns/op	       8 B/op	       1 allocs/op
+BenchmarkAny_Dynamic-4                     	82028919	        13.52 ns/op	       8 B/op	       1 allocs/op
+BenchmarkMap_Preallocated_100Elements-4    	 3736986	       312.0 ns/op	     896 B/op	       1 allocs/op
+BenchmarkMap_Preallocated_100Elements-4    	 3931396	       307.7 ns/op	     896 B/op	       1 allocs/op
+BenchmarkMap_Preallocated_100Elements-4    	 3893841	       305.2 ns/op	     896 B/op	       1 allocs/op
+BenchmarkMap_AppendDynamic_100Elements-4   	 1720755	       713.4 ns/op	    2040 B/op	       8 allocs/op
+BenchmarkMap_AppendDynamic_100Elements-4   	 1639543	       752.1 ns/op	    2040 B/op	       8 allocs/op
+BenchmarkMap_AppendDynamic_100Elements-4   	 1653678	       734.6 ns/op	    2040 B/op	       8 allocs/op
+PASS
+ok  	duplojs.local/benchmarks	19.605s
+
+# Première mesure, 20/11 (même banc, autre machine)
+goos: linux
+goarch: amd64
+pkg: duplojs.local/benchmarks
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkUnionN_Typed-4                    	226765842	         4.591 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUnionN_Typed-4                    	305764408	         4.424 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUnionN_Typed-4                    	281627104	         4.656 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAny_Dynamic-4                     	92633618	        13.16 ns/op	       8 B/op	       1 allocs/op
+BenchmarkAny_Dynamic-4                     	76236217	        14.69 ns/op	       8 B/op	       1 allocs/op
+BenchmarkAny_Dynamic-4                     	86709853	        13.92 ns/op	       8 B/op	       1 allocs/op
+BenchmarkMap_Preallocated_100Elements-4    	 3070320	       381.4 ns/op	     896 B/op	       1 allocs/op
+BenchmarkMap_Preallocated_100Elements-4    	 3043544	       366.6 ns/op	     896 B/op	       1 allocs/op
+BenchmarkMap_Preallocated_100Elements-4    	 3007686	       378.1 ns/op	     896 B/op	       1 allocs/op
+BenchmarkMap_AppendDynamic_100Elements-4   	 1366558	       890.5 ns/op	    2040 B/op	       8 allocs/op
+BenchmarkMap_AppendDynamic_100Elements-4   	 1383417	       904.0 ns/op	    2040 B/op	       8 allocs/op
+BenchmarkMap_AppendDynamic_100Elements-4   	 1340337	       920.6 ns/op	    2040 B/op	       8 allocs/op
+PASS
+ok  	duplojs.local/benchmarks	21.411s
+=== RUN   TestMemorySizes
+    benchmark_test.go:82: Taille Union2[EitherFail, EitherSuccess[float64]] : 64 octets (ligne de cache = 64 octets)
+    benchmark_test.go:83: Taille EitherFail                                 : 24 octets
+    benchmark_test.go:84: Taille EitherSuccess[float64]                    : 32 octets
+    benchmark_test.go:85: Taille EitherAny                                 : 24 octets
+--- PASS: TestMemorySizes (0.00s)
+PASS
+ok  	duplojs.local/benchmarks	0.003s
